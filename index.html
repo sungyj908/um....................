@@ -1,0 +1,3240 @@
+<!DOCTYPE html>
+<html lang="ko"><head><base href="https://94980597-atari-embeds.googleusercontent.com/embeds/6b07ff58ef6c9af0cc04f606a89001fe/inner-frame-minified.html?jsh=m%3B%2F_%2Fscs%2Fabc-static%2F_%2Fjs%2Fk%3Dgapi.lb.ko.mFcfXp-Xjhk.O%2Fd%3D1%2Frs%3DAHpOoo_vtG31uUKxcGbM9-GB66bWMvgXpg%2Fm%3D__features__" target="_blank">
+      <script>
+        (function() {
+          if (window.__atariInitRender) {
+            window.__atariInitRender(false);
+            return;
+          }
+          var isLiquid = false;
+          var guardsInstalled = false;
+          var LOCAL_DOWNLOAD_URL_RE = /^(?:blob|data):/i;
+          var PROTOCOL_RELATIVE_RE = /^[\/\\]{2}/;
+          var FORBIDDEN_TAG_RE = /^(?:iframe|frame|object|embed)$/i;
+          var XLINK_NS = 'http://www.w3.org/1999/xlink';
+          var origPreventDefault = Event.prototype.preventDefault;
+          var origStopPropagation = Event.prototype.stopPropagation;
+          var origStopImmediatePropagation =
+              Event.prototype.stopImmediatePropagation;
+          var origAddEventListener = EventTarget.prototype.addEventListener;
+          var origRemoveEventListener =
+              EventTarget.prototype.removeEventListener;
+          var origWindowStop = window.stop ? window.stop.bind(window) : null;
+          var origElementRemove = Element.prototype.remove;
+          var origGetAttribute = Element.prototype.getAttribute;
+          var origGetAttributeNS = Element.prototype.getAttributeNS;
+          var origHasAttribute = Element.prototype.hasAttribute;
+          var origHasAttributeNS = Element.prototype.hasAttributeNS;
+          var origSetAttribute = Element.prototype.setAttribute;
+          var origSetAttributeNS = Element.prototype.setAttributeNS;
+          var origSetAttributeNode = Element.prototype.setAttributeNode;
+          var origSetAttributeNodeNS = Element.prototype.setAttributeNodeNS;
+          var origRemoveAttribute = Element.prototype.removeAttribute;
+          var origRemoveAttributeNS = Element.prototype.removeAttributeNS;
+          var origComposedPath = Event.prototype.composedPath;
+          var origCreateElement = Document.prototype.createElement;
+          var origCreateElementNS = Document.prototype.createElementNS;
+          var validatingEvents =
+              typeof WeakSet !== 'undefined' ? new WeakSet() : null;
+          var activeDeferredListeners = null;
+          var inProgrammaticClick = 0;
+
+          function isLinkElement(el) {
+            var tag = el && el.tagName && el.tagName.toLowerCase();
+            return tag === 'a' || tag === 'area';
+          }
+
+          function hasLinkHref(link) {
+            return origHasAttribute.call(link, 'href') ||
+                origHasAttributeNS.call(link, XLINK_NS, 'href');
+          }
+
+          // Returns the href of an HTML or SVG link, which may only have the
+          // legacy xlink:href attribute.
+          function getLinkHref(link) {
+            return origGetAttribute.call(link, 'href') ||
+                origGetAttributeNS.call(link, XLINK_NS, 'href');
+          }
+
+          function removeLinkHref(link) {
+            origRemoveAttribute.call(link, 'href');
+            origRemoveAttributeNS.call(link, XLINK_NS, 'href');
+          }
+
+          // Returns whether the link downloads a file that the app created,
+          // which doesn't send data to other sites.
+          function isLocalDownloadLink(link, href) {
+            return origHasAttribute.call(link, 'download') &&
+                LOCAL_DOWNLOAD_URL_RE.test(href);
+          }
+
+          function isRefreshValue(val) {
+            return String(val || '').trim().toLowerCase() === 'refresh';
+          }
+
+          function purgeMetaRefresh(root) {
+            if (!root || !root.querySelectorAll) return;
+            var metas = root.querySelectorAll('meta[http-equiv]');
+            for (var i = 0; i < metas.length; i++) {
+              if (isRefreshValue(
+                  origGetAttribute.call(metas[i], 'http-equiv'))) {
+                origElementRemove.call(metas[i]);
+              }
+            }
+            var frames = root.querySelectorAll('iframe, frame, object, embed');
+            for (var j = 0; j < frames.length; j++) {
+              origElementRemove.call(frames[j]);
+            }
+          }
+
+          function getParentOrHost(node) {
+            if (!node) return null;
+            if (node.parentElement) return node.parentElement;
+            var parent = node.parentNode;
+            return parent && parent.host ? parent.host : null;
+          }
+
+          function findLinkFromNode(startNode, requireHref) {
+            var el = startNode;
+            while (el && el !== document) {
+              if (isLinkElement(el) && (!requireHref || hasLinkHref(el))) {
+                return el;
+              }
+              el = getParentOrHost(el);
+            }
+            return null;
+          }
+
+          function findLinkFromEvent(e) {
+            if (origComposedPath) {
+              try {
+                var path = origComposedPath.call(e);
+                for (var i = 0; i < path.length; i++) {
+                  var node = path[i];
+                  if (isLinkElement(node) && hasLinkHref(node)) {
+                    return node;
+                  }
+                }
+              } catch (err) {}
+            }
+            return findLinkFromNode(e.target, true);
+          }
+
+          // Keeps the app from opening popups, navigating its frame, and
+          // adding meta refresh tags. document.open() keeps the window, its
+          // prototypes, and the document, so these are installed once per
+          // frame rather than on every render.
+          function installNavigationGuards() {
+            try {
+              Object.defineProperty(window, 'open', {
+                value: function() {
+                  return null;
+                },
+                writable: false,
+                configurable: false
+              });
+            } catch (err) {
+              window.open = function() {
+                return null;
+              };
+            }
+            if (window.navigation && window.navigation.addEventListener) {
+              origAddEventListener.call(
+                  window.navigation, 'navigate', function(e) {
+                    if (!e.cancelable || e.destination.sameDocument) return;
+                    if (e.downloadRequest !== null &&
+                        LOCAL_DOWNLOAD_URL_RE.test(e.destination.url)) {
+                      return;
+                    }
+                    origPreventDefault.call(e);
+                  }, true);
+            }
+            var iframeWinDesc = typeof HTMLIFrameElement !== 'undefined' &&
+                Object.getOwnPropertyDescriptor(
+                    HTMLIFrameElement.prototype, 'contentWindow');
+            if (iframeWinDesc && iframeWinDesc.get) {
+              Object.defineProperty(
+                  HTMLIFrameElement.prototype, 'contentWindow', {
+                    get: function() {
+                      return null;
+                    },
+                    configurable: false,
+                    enumerable: true
+                  });
+            }
+            var iframeDocDesc = typeof HTMLIFrameElement !== 'undefined' &&
+                Object.getOwnPropertyDescriptor(
+                    HTMLIFrameElement.prototype, 'contentDocument');
+            if (iframeDocDesc && iframeDocDesc.get) {
+              Object.defineProperty(
+                  HTMLIFrameElement.prototype, 'contentDocument', {
+                    get: function() {
+                      return null;
+                    },
+                    configurable: false,
+                    enumerable: true
+                  });
+            }
+            Document.prototype.createElement = function(tagName, options) {
+              if (FORBIDDEN_TAG_RE.test(String(tagName || ''))) {
+                return origCreateElement.call(this, 'div', options);
+              }
+              return origCreateElement.apply(this, arguments);
+            };
+            if (origCreateElementNS) {
+              Document.prototype.createElementNS = function(ns, qName, opts) {
+                var local = String(qName || '').split(':').pop();
+                if (FORBIDDEN_TAG_RE.test(local)) {
+                  return origCreateElement.call(this, 'div');
+                }
+                return origCreateElementNS.apply(this, arguments);
+              };
+            }
+            var origClick = HTMLElement.prototype.click;
+            HTMLElement.prototype.click = function() {
+              var link = findLinkFromNode(this, true);
+              if (link) {
+                var clickHref = (getLinkHref(link) || '').trim();
+                if (!clickHref.startsWith('#') &&
+                    !isLocalDownloadLink(link, clickHref)) {
+                  return;
+                }
+              }
+              inProgrammaticClick++;
+              try {
+                return origClick.apply(this, arguments);
+              } finally {
+                inProgrammaticClick--;
+              }
+            };
+            function isMetaRefreshAttr(el, name, value) {
+              return el && el.tagName &&
+                  el.tagName.toLowerCase() === 'meta' &&
+                  String(name || '').trim().toLowerCase() === 'http-equiv' &&
+                  isRefreshValue(value);
+            }
+            function validateIfActiveLink(el) {
+              if (!activeDeferredListeners || !isLinkElement(el) ||
+                  !hasLinkHref(el)) {
+                return;
+              }
+              var curHref = (getLinkHref(el) || '').trim();
+              if (!curHref.startsWith('#')) {
+                handleLiquidExternalLink(
+                    activeDeferredListeners.event, el, curHref,
+                    activeDeferredListeners.programmatic);
+              }
+            }
+            Element.prototype.setAttribute = function(name, value) {
+              if (isMetaRefreshAttr(this, name, value)) {
+                origElementRemove.call(this);
+                return;
+              }
+              var res = origSetAttribute.apply(this, arguments);
+              if (String(name || '').toLowerCase() === 'href') {
+                validateIfActiveLink(this);
+              }
+              return res;
+            };
+            if (origSetAttributeNS) {
+              Element.prototype.setAttributeNS = function(ns, name, value) {
+                var local = String(name || '');
+                if (local.includes(':')) local = local.split(':').pop();
+                if (isMetaRefreshAttr(this, local, value)) {
+                  origElementRemove.call(this);
+                  return;
+                }
+                var res = origSetAttributeNS.apply(this, arguments);
+                if (local.toLowerCase() === 'href') {
+                  validateIfActiveLink(this);
+                }
+                return res;
+              };
+            }
+            if (origSetAttributeNode) {
+              Element.prototype.setAttributeNode = function(attr) {
+                if (attr && isMetaRefreshAttr(this, attr.name, attr.value)) {
+                  origElementRemove.call(this);
+                  return null;
+                }
+                var res = origSetAttributeNode.apply(this, arguments);
+                if (attr && String(attr.name || '').toLowerCase() === 'href') {
+                  validateIfActiveLink(this);
+                }
+                return res;
+              };
+            }
+            if (origSetAttributeNodeNS) {
+              Element.prototype.setAttributeNodeNS = function(attr) {
+                var name = attr && (attr.localName || attr.name);
+                if (attr && isMetaRefreshAttr(this, name, attr.value)) {
+                  origElementRemove.call(this);
+                  return null;
+                }
+                var res = origSetAttributeNodeNS.apply(this, arguments);
+                if (String(name || '').toLowerCase() === 'href') {
+                  validateIfActiveLink(this);
+                }
+                return res;
+              };
+            }
+            function wrapHrefSetter(ctor) {
+              if (!ctor || !ctor.prototype) return;
+              var hrefDesc = Object.getOwnPropertyDescriptor(
+                  ctor.prototype, 'href');
+              if (hrefDesc && hrefDesc.set) {
+                Object.defineProperty(ctor.prototype, 'href', {
+                  get: hrefDesc.get,
+                  set: function(value) {
+                    hrefDesc.set.call(this, value);
+                    validateIfActiveLink(this);
+                  },
+                  configurable: true,
+                  enumerable: true
+                });
+              }
+            }
+            if (typeof HTMLAnchorElement !== 'undefined') {
+              wrapHrefSetter(HTMLAnchorElement);
+            }
+            if (typeof HTMLAreaElement !== 'undefined') {
+              wrapHrefSetter(HTMLAreaElement);
+            }
+            if (typeof HTMLMetaElement !== 'undefined') {
+              var desc = Object.getOwnPropertyDescriptor(
+                  HTMLMetaElement.prototype, 'httpEquiv');
+              if (desc && desc.set) {
+                Object.defineProperty(HTMLMetaElement.prototype, 'httpEquiv', {
+                  get: desc.get,
+                  set: function(value) {
+                    if (isRefreshValue(value)) {
+                      origElementRemove.call(this);
+                      return;
+                    }
+                    desc.set.call(this, value);
+                  },
+                  configurable: true,
+                  enumerable: true
+                });
+              }
+            }
+            Event.prototype.stopPropagation = function() {
+              if (validatingEvents && validatingEvents.has(this)) {
+                return;
+              }
+              return origStopPropagation.apply(this, arguments);
+            };
+            Event.prototype.stopImmediatePropagation = function() {
+              if (validatingEvents && validatingEvents.has(this)) {
+                return;
+              }
+              return origStopImmediatePropagation.apply(this, arguments);
+            };
+            var cancelBubbleDesc = Object.getOwnPropertyDescriptor(
+                Event.prototype, 'cancelBubble');
+            if (cancelBubbleDesc && cancelBubbleDesc.set) {
+              Object.defineProperty(Event.prototype, 'cancelBubble', {
+                get: cancelBubbleDesc.get,
+                set: function(val) {
+                  if (val && validatingEvents && validatingEvents.has(this)) {
+                    return;
+                  }
+                  cancelBubbleDesc.set.call(this, val);
+                },
+                configurable: true,
+                enumerable: true
+              });
+            }
+            function wrapAddEventListener(origFn) {
+              return function(type, listener, options) {
+                var res = origFn.apply(this, arguments);
+                if (activeDeferredListeners &&
+                    type === activeDeferredListeners.type) {
+                  origRemoveEventListener.call(
+                      window, activeDeferredListeners.type,
+                      activeDeferredListeners.fn, false);
+                  origAddEventListener.call(
+                      window, activeDeferredListeners.type,
+                      activeDeferredListeners.fn, false);
+                }
+                return res;
+              };
+            }
+            var origWinAdd = window.addEventListener || origAddEventListener;
+            EventTarget.prototype.addEventListener =
+                wrapAddEventListener(origAddEventListener);
+            if (typeof Window !== 'undefined' && Window.prototype) {
+              try {
+                Window.prototype.addEventListener =
+                    wrapAddEventListener(origWinAdd);
+              } catch (err) {}
+            }
+            try {
+              window.addEventListener = wrapAddEventListener(origWinAdd);
+            } catch (err) {}
+            function observeMutations(target) {
+              if (!target || typeof MutationObserver === 'undefined') return;
+              new MutationObserver(function(mutations) {
+                if (activeDeferredListeners) {
+                  for (var i = 0; i < mutations.length; i++) {
+                    var m = mutations[i];
+                    if (m.type === 'attributes' &&
+                        isLinkElement(m.target) &&
+                        hasLinkHref(m.target)) {
+                      var mHref = (getLinkHref(m.target) || '').trim();
+                      if (!mHref.startsWith('#')) {
+                        handleLiquidExternalLink(
+                            activeDeferredListeners.event, m.target, mHref,
+                            activeDeferredListeners.programmatic);
+                      }
+                    }
+                  }
+                }
+                purgeMetaRefresh(target);
+              }).observe(target, {
+                childList: true,
+                subtree: true,
+                attributes: true,
+                attributeFilter: ['http-equiv', 'href']
+              });
+            }
+            observeMutations(document);
+            if (Element.prototype.attachShadow) {
+              var origAttachShadow = Element.prototype.attachShadow;
+              Element.prototype.attachShadow = function() {
+                var sr = origAttachShadow.apply(this, arguments);
+                observeMutations(sr);
+                return sr;
+              };
+            }
+          }
+
+          // Returns the URL of an absolute or protocol-relative href, or null.
+          function parseAbsoluteUrl(href) {
+            var candidate =
+                PROTOCOL_RELATIVE_RE.test(href) ? 'https:' + href : href;
+            try {
+              return new URL(candidate);
+            } catch (err) {
+              return null;
+            }
+          }
+
+          // Opens the link in a new tab through the Google redirector, which
+          // warns users before they leave for another site.
+          function routeThroughRedirector(link, url) {
+            var redirectUrl = url.href;
+            if (url.origin !== 'https://www.google.com' ||
+                url.pathname !== '/url' ||
+                !url.searchParams.has('q')) {
+              redirectUrl = 'https://www.google.com/url?q=' +
+                  encodeURIComponent(url.href);
+            }
+            origSetAttribute.call(link, 'href', redirectUrl);
+            origRemoveAttributeNS.call(link, XLINK_NS, 'href');
+            origSetAttribute.call(link, 'target', '_blank');
+            origSetAttribute.call(link, 'rel', 'noopener noreferrer');
+          }
+
+          // Lets Liquid App links open web pages only through the redirector,
+          // and blocks links with other protocols, such as javascript:.
+          // Context menu events rewrite or remove the link attribute so that
+          // "Open link in new tab" also goes through the redirector or is
+          // disabled.
+          function handleLiquidExternalLink(e, link, href, programmatic) {
+            if (isLocalDownloadLink(link, href)) return;
+            if (programmatic || inProgrammaticClick > 0) {
+              removeLinkHref(link);
+              origPreventDefault.call(e);
+              origStopPropagation.call(e);
+              return;
+            }
+            var url = parseAbsoluteUrl(href);
+            var protocol = url ? url.protocol : '';
+            if (protocol === 'http:' || protocol === 'https:') {
+              routeThroughRedirector(link, url);
+            } else if (protocol !== 'mailto:' && protocol !== 'tel:') {
+              if (e.type === 'contextmenu') {
+                removeLinkHref(link);
+              } else {
+                origPreventDefault.call(e);
+                origStopPropagation.call(e);
+              }
+            }
+          }
+
+          function validateLiquidLinkAfterBubble(e, anchor, programmatic) {
+            if (validatingEvents) {
+              validatingEvents.add(e);
+            }
+            var state = {
+              type: e.type,
+              fn: onBubble,
+              event: e,
+              programmatic: programmatic
+            };
+            activeDeferredListeners = state;
+            function checkTarget(ev) {
+              var targetLink = anchor || findLinkFromEvent(ev);
+              if (!targetLink || !hasLinkHref(targetLink)) return;
+              var latestHref = (getLinkHref(targetLink) || '').trim();
+              if (!latestHref.startsWith('#')) {
+                handleLiquidExternalLink(
+                    ev, targetLink, latestHref, programmatic);
+              }
+            }
+            Promise.resolve().then(function() {
+              checkTarget(e);
+              if (activeDeferredListeners === state) {
+                activeDeferredListeners = null;
+              }
+            });
+            function onBubble(ev) {
+              origRemoveEventListener.call(window, ev.type, onBubble, false);
+              checkTarget(ev);
+            }
+            origAddEventListener.call(window, e.type, onBubble, false);
+          }
+
+          function handleLinkClick(e) {
+            var programmatic = inProgrammaticClick > 0;
+            // Find the nearest ancestor link (handles nested icons, spans,
+            // svgs, and shadow DOM).
+            var anchor = findLinkFromEvent(e);
+            if (!anchor) {
+              if (isLiquid) {
+                validateLiquidLinkAfterBubble(e, null, programmatic);
+              }
+              return;
+            }
+
+            if (isLiquid) {
+              validateLiquidLinkAfterBubble(e, anchor, programmatic);
+            }
+            var href = (getLinkHref(anchor) || '').trim();
+            if (!href.startsWith('#')) {
+              if (isLiquid) {
+                handleLiquidExternalLink(e, anchor, href, programmatic);
+              }
+              return;
+            }
+            if (e.type === 'contextmenu') return;
+
+            // Prevent default <base target="_blank"> navigation to a new blank tab.
+            origPreventDefault.call(e);
+            if (!isLiquid) {
+              origStopPropagation.call(e);
+            }
+
+            // Handle empty anchor or top anchor.
+            if (href === '#' || href === '#top') {
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+              return;
+            }
+
+            // Resolve target element by id, falling back to legacy name attribute.
+            var targetId = href.slice(1);
+            try {
+              targetId = decodeURIComponent(targetId);
+            } catch (err) {}
+
+            var targetEl = document.getElementById(targetId);
+            if (!targetEl) {
+              try {
+                var escaped = window.CSS && CSS.escape ? CSS.escape(targetId) : targetId.replace(/["\\]/g, '\\$&');
+                targetEl = document.querySelector('[name="' + escaped + '"]');
+              } catch (err) {}
+            }
+
+            // Smoothly scroll to the target within the embed and update URL hash history.
+            if (targetEl) {
+              targetEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              if (window.history && window.history.pushState) {
+                window.history.pushState(null, '', href);
+              }
+            }
+          }
+
+          function initRender(nextIsLiquid) {
+            isLiquid = isLiquid || !!nextIsLiquid;
+            if (isLiquid) {
+              if (!guardsInstalled) {
+                guardsInstalled = true;
+                installNavigationGuards();
+              } else {
+                try {
+                  window.addEventListener =
+                      EventTarget.prototype.addEventListener;
+                } catch (err) {}
+              }
+              // document.open() removes the window's listeners, so this is
+              // added on every render.
+              origAddEventListener.call(window, 'beforeunload', function(e) {
+                origPreventDefault.call(e);
+                if (origWindowStop) {
+                  origWindowStop();
+                }
+              }, true);
+              purgeMetaRefresh(document);
+            }
+            // Listen during capturing phase to preempt <base target="_blank">.
+            origAddEventListener.call(
+                document, 'click', handleLinkClick, true);
+            if (isLiquid) {
+              origAddEventListener.call(
+                  document, 'auxclick', handleLinkClick, true);
+              origAddEventListener.call(
+                  document, 'contextmenu', handleLinkClick, true);
+            }
+          }
+
+          try {
+            Object.defineProperty(window, '__atariInitRender', {
+              value: initRender,
+              writable: false,
+              configurable: false
+            });
+          } catch (err) {
+            window.__atariInitRender = initRender;
+          }
+          initRender(false);
+        })();
+      </script>
+    
+
+
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>조선시대 구언(求言) 교서 사료 지식 그래프</title>
+  <style>
+    /* ==========================================================================
+       1. DESIGN TOKENS & HANJI(韓紙) THEME STYLES (100% SELF-CONTAINED)
+       ========================================================================== */
+    :root {
+      --bg-hanji: #F7F3E9;
+      --bg-hanji-elevated: #FCF9F2;
+      --bg-hanji-subtle: #EFE9DA;
+      --border-hanji: #D8CEBC;
+      --border-strong: #B9AC96;
+      --text-ink: #2C241E;
+      --text-ink-muted: #665B50;
+      --text-ink-light: #8C7F70;
+
+      /* Class Colors */
+      --color-agent: #A8322D;       /* 단청 적색 - 주체 */
+      --color-document: #2B547E;    /* 쪽빛 청색 - 문서·행위 */
+      --color-topic: #2E6F40;       /* 송엽 녹색 - 건의 대상 */
+      --color-policy: #B5852A;      /* 황토 금색 - 정치·결과 */
+      --color-scope: #5D4E7B;       /* 자줏빛 회색 - 영역 */
+
+      --font-serif: "Noto Serif KR", "Batang", "AppleMyungjo", "Nanum Myeongjo", Georgia, serif;
+      --font-sans: "Noto Sans KR", "Malgun Gothic", "Apple SD Gothic Neo", "Nanum Gothic", sans-serif;
+
+      --shadow-sm: 0 2px 6px rgba(44, 36, 30, 0.06);
+      --shadow-md: 0 6px 20px rgba(44, 36, 30, 0.10);
+      --shadow-lg: 0 12px 32px rgba(44, 36, 30, 0.16);
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --radius-lg: 14px;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html, body {
+      height: 100%;
+      width: 100%;
+      background-color: var(--bg-hanji);
+      color: var(--text-ink);
+      font-family: var(--font-sans);
+      line-height: 1.5;
+      overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Subtle traditional Hanji fiber background pattern */
+    body {
+      background-image:
+        radial-gradient(rgba(185, 172, 150, 0.18) 1px, transparent 0),
+        radial-gradient(rgba(168, 50, 45, 0.04) 1px, transparent 0),
+        linear-gradient(180deg, rgba(255, 252, 245, 0.55) 0%, rgba(239, 233, 218, 0.45) 100%);
+      background-size: 28px 28px, 43px 43px, 100% 100%;
+      background-position: 0 0, 14px 14px, 0 0;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Custom Scrollbars */
+    ::-webkit-scrollbar {
+      width: 7px;
+      height: 7px;
+    }
+    ::-webkit-scrollbar-track {
+      background: var(--bg-hanji-subtle);
+    }
+    ::-webkit-scrollbar-thumb {
+      background: var(--border-strong);
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #968872;
+    }
+
+    /* ==========================================================================
+       2. TOP HEADER & STAMP SEAL
+       ========================================================================== */
+    .app-header {
+      background: rgba(252, 249, 242, 0.94);
+      border-bottom: 1px solid var(--border-hanji);
+      padding: 10px 18px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      box-shadow: var(--shadow-sm);
+      z-index: 30;
+    }
+
+    .brand-area {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .royal-seal {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 2px solid var(--color-agent);
+      color: var(--color-agent);
+      background: rgba(168, 50, 45, 0.05);
+      font-family: var(--font-serif);
+      font-weight: 800;
+      font-size: 13px;
+      letter-spacing: 1.5px;
+      padding: 4px 8px;
+      border-radius: 4px;
+      box-shadow: inset 0 0 0 1px rgba(168, 50, 45, 0.25);
+      user-select: none;
+      flex-shrink: 0;
+    }
+
+    .brand-title {
+      font-family: var(--font-serif);
+      font-size: 18px;
+      font-weight: 800;
+      color: var(--text-ink);
+      letter-spacing: -0.3px;
+    }
+
+    .brand-subtitle {
+      font-size: 12px;
+      color: var(--text-ink-muted);
+      margin-top: 1px;
+    }
+
+    .header-actions {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* Search Input */
+    .search-box {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+
+    .search-box input {
+      width: 220px;
+      padding: 7px 30px 7px 32px;
+      font-size: 13px;
+      font-family: var(--font-sans);
+      color: var(--text-ink);
+      background: var(--bg-hanji);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-sm);
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .search-box input:focus {
+      border-color: var(--color-agent);
+      box-shadow: 0 0 0 3px rgba(168, 50, 45, 0.12);
+    }
+
+    .search-icon {
+      position: absolute;
+      left: 10px;
+      color: var(--text-ink-light);
+      pointer-events: none;
+      display: flex;
+    }
+
+    .search-clear {
+      position: absolute;
+      right: 7px;
+      background: none;
+      border: none;
+      color: var(--text-ink-muted);
+      cursor: pointer;
+      font-size: 14px;
+      padding: 2px 5px;
+      border-radius: 4px;
+      display: none;
+    }
+    .search-clear.visible {
+      display: block;
+    }
+    .search-clear:hover {
+      background: var(--bg-hanji-subtle);
+      color: var(--text-ink);
+    }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 12px;
+      font-size: 13px;
+      font-weight: 600;
+      font-family: var(--font-sans);
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-strong);
+      background: var(--bg-hanji-elevated);
+      color: var(--text-ink);
+      cursor: pointer;
+      transition: all 0.18s ease;
+      user-select: none;
+      white-space: nowrap;
+    }
+
+    .btn:hover {
+      background: var(--bg-hanji-subtle);
+      border-color: var(--text-ink-muted);
+    }
+
+    .btn:active {
+      transform: translateY(1px);
+    }
+
+    .btn-primary {
+      background: var(--color-agent);
+      border-color: var(--color-agent);
+      color: #FFFDF9;
+    }
+    .btn-primary:hover {
+      background: #8E2824;
+      border-color: #8E2824;
+    }
+
+    .btn-gold {
+      background: rgba(181, 133, 42, 0.12);
+      border-color: var(--color-policy);
+      color: #7D5814;
+    }
+    .btn-gold:hover {
+      background: var(--color-policy);
+      color: #FFFDF9;
+    }
+
+    /* ==========================================================================
+       3. FILTER & LAYOUT CONTROL BAR
+       ========================================================================== */
+    .control-bar {
+      background: rgba(247, 243, 233, 0.92);
+      border-bottom: 1px solid var(--border-hanji);
+      padding: 8px 18px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      z-index: 25;
+    }
+
+    .filter-group, .layout-group {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .group-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text-ink-muted);
+      margin-right: 4px;
+    }
+
+    .chip-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 11px;
+      font-size: 12px;
+      font-weight: 600;
+      border-radius: 999px;
+      border: 1px solid var(--border-strong);
+      background: var(--bg-hanji-elevated);
+      color: var(--text-ink);
+      cursor: pointer;
+      transition: all 0.18s ease;
+    }
+
+    .chip-btn:hover {
+      background: var(--bg-hanji-subtle);
+    }
+
+    .chip-btn.active {
+      background: var(--text-ink);
+      border-color: var(--text-ink);
+      color: #FFFDF9;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .chip-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      display: inline-block;
+      border: 1px solid rgba(255,255,255,0.6);
+    }
+
+    .chip-btn[data-filter="agent"].active { background: var(--color-agent); border-color: var(--color-agent); }
+    .chip-btn[data-filter="document"].active { background: var(--color-document); border-color: var(--color-document); }
+    .chip-btn[data-filter="topic"].active { background: var(--color-topic); border-color: var(--color-topic); }
+    .chip-btn[data-filter="policy"].active { background: var(--color-policy); border-color: var(--color-policy); }
+    .chip-btn[data-filter="scope"].active { background: var(--color-scope); border-color: var(--color-scope); }
+
+    .layout-btn {
+      padding: 5px 10px;
+      font-size: 12px;
+      font-weight: 600;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-strong);
+      background: var(--bg-hanji-elevated);
+      color: var(--text-ink-muted);
+      cursor: pointer;
+      transition: all 0.18s ease;
+    }
+
+    .layout-btn:hover {
+      color: var(--text-ink);
+      background: var(--bg-hanji-subtle);
+    }
+
+    .layout-btn.active {
+      background: var(--color-document);
+      border-color: var(--color-document);
+      color: #FFFDF9;
+    }
+
+    /* ==========================================================================
+       4. MAIN WORKSPACE: GRAPH CANVAS + RIGHT INSPECTOR PANEL
+       ========================================================================== */
+    .workspace {
+      flex: 1;
+      display: flex;
+      min-height: 0;
+      position: relative;
+    }
+
+    .canvas-wrapper {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+      min-height: 460px;
+      touch-action: none; /* Crucial for smooth pointer drag & pan on touch devices */
+    }
+
+    #graph-svg {
+      width: 100%;
+      height: 100%;
+      display: block;
+      cursor: grab;
+      user-select: none;
+    }
+
+    #graph-svg.is-panning {
+      cursor: grabbing;
+    }
+
+    /* SVG Node & Edge Interactive Styling */
+    .node-group {
+      cursor: pointer;
+      transition: opacity 0.25s ease;
+    }
+
+    .node-group:hover .node-shape {
+      filter: brightness(1.07) drop-shadow(0 5px 10px rgba(44, 36, 30, 0.24));
+    }
+
+    .node-shape {
+      transition: stroke-width 0.2s ease, filter 0.2s ease;
+      filter: drop-shadow(0 3px 6px rgba(44, 36, 30, 0.16));
+    }
+
+    .node-halo {
+      fill: none;
+      stroke: var(--text-ink);
+      stroke-width: 2.5;
+      stroke-dasharray: 4 3;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease;
+    }
+
+    .node-group.selected .node-halo {
+      opacity: 0.9;
+    }
+
+    .node-group.selected .node-shape {
+      stroke: #FFFDF9;
+      stroke-width: 3;
+      filter: drop-shadow(0 6px 14px rgba(44, 36, 30, 0.32));
+    }
+
+    .node-title-text {
+      font-family: var(--font-serif);
+      font-size: 13px;
+      font-weight: 700;
+      fill: #FFFDF9;
+      text-anchor: middle;
+      dominant-baseline: central;
+      pointer-events: none;
+      text-shadow: 0 1px 2px rgba(25, 20, 15, 0.55);
+    }
+
+    .node-hanja-text {
+      font-family: var(--font-serif);
+      font-size: 10px;
+      font-weight: 400;
+      fill: rgba(255, 253, 249, 0.9);
+      text-anchor: middle;
+      dominant-baseline: central;
+      pointer-events: none;
+      text-shadow: 0 1px 2px rgba(25, 20, 15, 0.55);
+    }
+
+    .edge-group {
+      cursor: pointer;
+      transition: opacity 0.25s ease;
+    }
+
+    .edge-hit {
+      fill: none;
+      stroke: transparent;
+      stroke-width: 18;
+    }
+
+    .edge-visible {
+      fill: none;
+      stroke: #8A7D6D;
+      stroke-width: 1.7;
+      transition: stroke 0.2s ease, stroke-width 0.2s ease;
+    }
+
+    .edge-group:hover .edge-visible {
+      stroke: var(--color-document);
+      stroke-width: 2.6;
+    }
+
+    .edge-group.highlighted .edge-visible {
+      stroke: var(--color-agent);
+      stroke-width: 2.6;
+    }
+
+    .edge-group.selected .edge-visible {
+      stroke: var(--color-agent);
+      stroke-width: 3.4;
+    }
+
+    .edge-label-bg {
+      fill: rgba(252, 249, 242, 0.94);
+      stroke: var(--border-strong);
+      stroke-width: 1;
+      rx: 5;
+      ry: 5;
+      transition: fill 0.2s ease, stroke 0.2s ease;
+    }
+
+    .edge-group:hover .edge-label-bg {
+      fill: #EBF3FA;
+      stroke: var(--color-document);
+    }
+
+    .edge-group.highlighted .edge-label-bg,
+    .edge-group.selected .edge-label-bg {
+      fill: #FDF0EF;
+      stroke: var(--color-agent);
+      stroke-width: 1.4;
+    }
+
+    .edge-label-text {
+      font-family: var(--font-sans);
+      font-size: 10.5px;
+      font-weight: 600;
+      fill: var(--text-ink);
+      text-anchor: middle;
+      dominant-baseline: central;
+      pointer-events: none;
+    }
+
+    .edge-group.highlighted .edge-label-text,
+    .edge-group.selected .edge-label-text {
+      fill: var(--color-agent);
+      font-weight: 700;
+    }
+
+    .dimmed {
+      opacity: 0.2 !important;
+    }
+
+    /* Floating Legend & Zoom Controls on Canvas */
+    .canvas-legend {
+      position: absolute;
+      bottom: 16px;
+      left: 16px;
+      background: rgba(252, 249, 242, 0.94);
+      border: 1px solid var(--border-hanji);
+      border-radius: var(--radius-md);
+      padding: 10px 14px;
+      box-shadow: var(--shadow-md);
+      font-size: 11.5px;
+      pointer-events: auto;
+      z-index: 15;
+    }
+
+    .legend-title {
+      font-family: var(--font-serif);
+      font-weight: 700;
+      font-size: 12px;
+      color: var(--text-ink);
+      margin-bottom: 6px;
+      border-bottom: 1px solid var(--border-hanji);
+      padding-bottom: 4px;
+    }
+
+    .legend-items {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 5px;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text-ink-muted);
+    }
+
+    .legend-shape {
+      width: 16px;
+      height: 16px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .zoom-controls {
+      position: absolute;
+      bottom: 16px;
+      right: 16px;
+      display: flex;
+      flex-direction: column;
+      background: rgba(252, 249, 242, 0.95);
+      border: 1px solid var(--border-hanji);
+      border-radius: var(--radius-md);
+      box-shadow: var(--shadow-md);
+      overflow: hidden;
+      z-index: 15;
+    }
+
+    .zoom-btn {
+      width: 38px;
+      height: 36px;
+      border: none;
+      background: transparent;
+      color: var(--text-ink);
+      font-size: 16px;
+      font-weight: 700;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-bottom: 1px solid var(--border-hanji);
+      transition: background 0.15s;
+    }
+    .zoom-btn:last-child {
+      border-bottom: none;
+    }
+    .zoom-btn:hover {
+      background: var(--bg-hanji-subtle);
+    }
+
+    .canvas-hint {
+      position: absolute;
+      top: 12px;
+      left: 16px;
+      background: rgba(252, 249, 242, 0.88);
+      border: 1px solid var(--border-hanji);
+      border-radius: 999px;
+      padding: 4px 12px;
+      font-size: 11.5px;
+      color: var(--text-ink-muted);
+      pointer-events: none;
+      z-index: 10;
+    }
+
+    /* ==========================================================================
+       5. RIGHT SIDEBAR: INSPECTOR & HISTORICAL SOURCE TEXT
+       ========================================================================== */
+    .inspector-panel {
+      width: 400px;
+      max-width: 100%;
+      background: var(--bg-hanji-elevated);
+      border-left: 1px solid var(--border-hanji);
+      display: flex;
+      flex-direction: column;
+      box-shadow: -4px 0 18px rgba(44, 36, 30, 0.05);
+      z-index: 20;
+    }
+
+    .panel-tabs {
+      display: flex;
+      border-bottom: 1px solid var(--border-hanji);
+      background: var(--bg-hanji-subtle);
+    }
+
+    .panel-tab {
+      flex: 1;
+      padding: 11px 12px;
+      font-size: 13px;
+      font-weight: 700;
+      font-family: var(--font-serif);
+      color: var(--text-ink-muted);
+      background: transparent;
+      border: none;
+      border-bottom: 3px solid transparent;
+      cursor: pointer;
+      transition: all 0.18s ease;
+    }
+
+    .panel-tab:hover {
+      color: var(--text-ink);
+      background: rgba(255, 255, 255, 0.35);
+    }
+
+    .panel-tab.active {
+      color: var(--color-agent);
+      background: var(--bg-hanji-elevated);
+      border-bottom-color: var(--color-agent);
+    }
+
+    .panel-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 18px;
+    }
+
+    .tab-pane {
+      display: none;
+    }
+    .tab-pane.active {
+      display: block;
+    }
+
+    /* Empty State / Overview Guide */
+    .overview-card {
+      background: var(--bg-hanji);
+      border: 1px solid var(--border-hanji);
+      border-radius: var(--radius-md);
+      padding: 16px;
+      margin-bottom: 14px;
+    }
+
+    .overview-card h3 {
+      font-family: var(--font-serif);
+      font-size: 15px;
+      font-weight: 800;
+      color: var(--text-ink);
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .overview-card p {
+      font-size: 13px;
+      color: var(--text-ink-muted);
+      line-height: 1.65;
+    }
+
+    .quick-node-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 10px;
+    }
+
+    .quick-node-pill {
+      font-size: 12px;
+      font-weight: 600;
+      padding: 4px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border-strong);
+      background: var(--bg-hanji-elevated);
+      color: var(--text-ink);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .quick-node-pill:hover {
+      background: var(--text-ink);
+      color: #FFFDF9;
+      border-color: var(--text-ink);
+    }
+
+    /* Node / Edge Detail Styles */
+    .detail-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border-hanji);
+      margin-bottom: 14px;
+    }
+
+    .class-badge {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 999px;
+      font-size: 11.5px;
+      font-weight: 700;
+      color: #FFFDF9;
+      margin-bottom: 6px;
+    }
+
+    .detail-title {
+      font-family: var(--font-serif);
+      font-size: 20px;
+      font-weight: 800;
+      color: var(--text-ink);
+      line-height: 1.3;
+    }
+
+    .detail-hanja {
+      font-family: var(--font-serif);
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text-ink-muted);
+      margin-left: 4px;
+    }
+
+    .detail-section {
+      margin-bottom: 16px;
+    }
+
+    .section-label {
+      font-size: 11.5px;
+      font-weight: 700;
+      color: var(--text-ink-muted);
+      letter-spacing: 0.4px;
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .desc-box {
+      background: var(--bg-hanji);
+      border: 1px solid var(--border-hanji);
+      border-radius: var(--radius-sm);
+      padding: 12px;
+      font-size: 13.5px;
+      color: var(--text-ink);
+      line-height: 1.65;
+    }
+
+    .quote-box {
+      background: #F2ECE0;
+      border-left: 4px solid var(--color-agent);
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+      padding: 11px 13px;
+      font-family: var(--font-serif);
+      font-size: 13px;
+      color: var(--text-ink);
+      line-height: 1.7;
+    }
+
+    .rel-list {
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+    }
+
+    .rel-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 8px 11px;
+      background: var(--bg-hanji);
+      border: 1px solid var(--border-hanji);
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: all 0.16s ease;
+    }
+
+    .rel-item:hover {
+      background: var(--bg-hanji-subtle);
+      border-color: var(--text-ink-muted);
+      transform: translateX(2px);
+    }
+
+    .rel-node-name {
+      font-family: var(--font-serif);
+      font-weight: 700;
+      font-size: 13px;
+      color: var(--text-ink);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .rel-tag {
+      font-size: 11.5px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 4px;
+      background: rgba(43, 84, 126, 0.1);
+      color: var(--color-document);
+      border: 1px solid rgba(43, 84, 126, 0.25);
+      white-space: nowrap;
+    }
+
+    .rel-tag.out {
+      background: rgba(46, 111, 64, 0.1);
+      color: var(--color-topic);
+      border-color: rgba(46, 111, 64, 0.25);
+    }
+
+    /* Edge Inspector Card */
+    .edge-triple-box {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      background: var(--bg-hanji);
+      border: 1px solid var(--border-hanji);
+      border-radius: var(--radius-md);
+      padding: 14px;
+      margin-bottom: 14px;
+    }
+
+    .triple-node-btn {
+      width: 100%;
+      padding: 9px 12px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-strong);
+      background: var(--bg-hanji-elevated);
+      font-family: var(--font-serif);
+      font-weight: 700;
+      font-size: 14px;
+      color: var(--text-ink);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      transition: all 0.16s;
+    }
+    .triple-node-btn:hover {
+      border-color: var(--color-agent);
+      background: #FDF8F7;
+    }
+
+    .triple-arrow {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      color: var(--color-agent);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    /* Historical Text Pane */
+    .source-guide {
+      font-size: 12px;
+      color: var(--text-ink-muted);
+      background: var(--bg-hanji-subtle);
+      padding: 8px 11px;
+      border-radius: var(--radius-sm);
+      margin-bottom: 12px;
+      border: 1px solid var(--border-hanji);
+    }
+
+    .source-article {
+      background: var(--bg-hanji);
+      border: 1px solid var(--border-hanji);
+      border-radius: var(--radius-md);
+      padding: 16px;
+      font-family: var(--font-serif);
+      font-size: 14.5px;
+      line-height: 2.05;
+      color: var(--text-ink);
+      box-shadow: inset 0 1px 4px rgba(44, 36, 30, 0.05);
+    }
+
+    .kw-btn {
+      display: inline;
+      padding: 2px 6px;
+      margin: 0 1px;
+      border-radius: 4px;
+      font-family: var(--font-serif);
+      font-weight: 700;
+      font-size: 14px;
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: all 0.16s ease;
+    }
+
+    .kw-btn.agent {
+      background: rgba(168, 50, 45, 0.13);
+      color: #8A221E;
+      border-color: rgba(168, 50, 45, 0.35);
+    }
+    .kw-btn.agent:hover, .kw-btn.agent.active {
+      background: var(--color-agent);
+      color: #FFFDF9;
+    }
+
+    .kw-btn.document {
+      background: rgba(43, 84, 126, 0.13);
+      color: #1F4266;
+      border-color: rgba(43, 84, 126, 0.35);
+    }
+    .kw-btn.document:hover, .kw-btn.document.active {
+      background: var(--color-document);
+      color: #FFFDF9;
+    }
+
+    .kw-btn.topic {
+      background: rgba(46, 111, 64, 0.13);
+      color: #21542F;
+      border-color: rgba(46, 111, 64, 0.35);
+    }
+    .kw-btn.topic:hover, .kw-btn.topic.active {
+      background: var(--color-topic);
+      color: #FFFDF9;
+    }
+
+    .kw-btn.policy {
+      background: rgba(181, 133, 42, 0.16);
+      color: #7D5814;
+      border-color: rgba(181, 133, 42, 0.42);
+    }
+    .kw-btn.policy:hover, .kw-btn.policy.active {
+      background: var(--color-policy);
+      color: #FFFDF9;
+    }
+
+    .kw-btn.scope {
+      background: rgba(93, 78, 123, 0.14);
+      color: #45385E;
+      border-color: rgba(93, 78, 123, 0.38);
+    }
+    .kw-btn.scope:hover, .kw-btn.scope.active {
+      background: var(--color-scope);
+      color: #FFFDF9;
+    }
+
+    .source-mini-preview {
+      margin-top: 12px;
+      padding: 12px;
+      border-radius: var(--radius-sm);
+      background: var(--bg-hanji-elevated);
+      border: 1px solid var(--border-strong);
+      box-shadow: var(--shadow-sm);
+      display: none;
+    }
+    .source-mini-preview.visible {
+      display: block;
+    }
+
+    /* Non-blocking Toast Message */
+    .toast-message {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%) translateY(20px);
+      background: var(--text-ink);
+      color: #FFFDF9;
+      padding: 10px 18px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 600;
+      box-shadow: var(--shadow-lg);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.25s ease, transform 0.25s ease;
+      z-index: 100;
+    }
+    .toast-message.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    /* ==========================================================================
+       6. RESPONSIVE ADAPTATIONS (TABLET & MOBILE)
+       ========================================================================== */
+    @media (max-width: 960px) {
+      .workspace {
+        flex-direction: column;
+      }
+      .canvas-wrapper {
+        height: 54vh;
+        min-height: 360px;
+      }
+      .inspector-panel {
+        width: 100%;
+        border-left: none;
+        border-top: 1px solid var(--border-hanji);
+        max-height: 46vh;
+      }
+      .canvas-legend {
+        display: none;
+      }
+    }
+
+    @media (max-width: 600px) {
+      .brand-title {
+        font-size: 15.5px;
+      }
+      .brand-subtitle {
+        display: none;
+      }
+      .search-box input {
+        width: 165px;
+      }
+      .canvas-hint {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- TOP HEADER -->
+  <header class="app-header">
+    <div class="brand-area">
+      <div class="royal-seal">求言敎書</div>
+      <div>
+        <h1 class="brand-title">조선시대 구언(求言) 교서 사료 지식 그래프</h1>
+        <p class="brand-subtitle">상왕의 대통 수임부터 실봉 계문 수용 및 신정(新政) 도모까지의 구조화 온톨로지</p>
+      </div>
+    </div>
+
+    <div class="header-actions">
+      <div class="search-box">
+        <span class="search-icon" aria-hidden="true">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+        </span>
+        <input type="text" id="search-input" placeholder="노드·한자·설명 검색..." autocomplete="off">
+        <button type="button" id="search-clear" class="search-clear" title="검색어 지우기">✕</button>
+      </div>
+
+      <button type="button" id="btn-source-toggle" class="btn btn-gold" title="사료 원문 보기 전환">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+          <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+          <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+        </svg>
+        <span>사료 원문 보기</span>
+      </button>
+
+      <button type="button" id="btn-fit" class="btn" title="그래프 전체 화면 맞춤">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+          <polyline points="15 3 21 3 21 9"></polyline>
+          <polyline points="9 21 3 21 3 15"></polyline>
+          <line x1="21" y1="3" x2="14" y2="10"></line>
+          <line x1="3" y1="21" x2="10" y2="14"></line>
+        </svg>
+        <span>화면 맞춤</span>
+      </button>
+
+      <button type="button" id="btn-download-html" class="btn btn-primary" title="독립 실행 가능한 HTML 파일 다운로드">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+          <polyline points="7 10 12 15 17 10"></polyline>
+          <line x1="12" y1="15" x2="12" y2="3"></line>
+        </svg>
+        <span>HTML 다운로드</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- FILTER & LAYOUT CONTROL BAR -->
+  <nav class="control-bar" aria-label="필터 및 레이아웃 제어">
+    <div class="filter-group">
+      <span class="group-label">클래스 필터:</span>
+      <button type="button" class="chip-btn active" data-filter="all">전체 (15)</button>
+      <button type="button" class="chip-btn" data-filter="agent">
+        <span class="chip-dot" style="background:#A8322D"></span>주체 (5)
+      </button>
+      <button type="button" class="chip-btn" data-filter="document">
+        <span class="chip-dot" style="background:#2B547E"></span>문서·행위 (3)
+      </button>
+      <button type="button" class="chip-btn" data-filter="topic">
+        <span class="chip-dot" style="background:#2E6F40"></span>건의 대상 (4)
+      </button>
+      <button type="button" class="chip-btn" data-filter="policy">
+        <span class="chip-dot" style="background:#B5852A"></span>정치·결과 (2)
+      </button>
+      <button type="button" class="chip-btn" data-filter="scope">
+        <span class="chip-dot" style="background:#5D4E7B"></span>영역 (1)
+      </button>
+    </div>
+
+    <div class="layout-group">
+      <span class="group-label">배치 구조:</span>
+      <button type="button" class="layout-btn active" data-layout="flow">서사 흐름도(기본)</button>
+      <button type="button" class="layout-btn" data-layout="hierarchy">계층 구조도</button>
+      <button type="button" class="layout-btn" data-layout="radial">원형 방사형</button>
+    </div>
+  </nav>
+
+  <!-- MAIN WORKSPACE -->
+  <main class="workspace">
+
+    <!-- LEFT: INTERACTIVE SVG CANVAS -->
+    <section class="canvas-wrapper" id="canvas-wrapper" aria-label="지식 그래프 캔버스">
+      <div class="canvas-hint">💡 노드·간선 클릭: 상세 분석 | 노드 드래그: 위치 이동 | 배경 드래그·휠: 이동 및 확대/축소</div>
+
+      <svg id="graph-svg" xmlns="http://www.w3.org/2000/svg" class="">
+        <defs>
+          <!-- Standard Arrowhead -->
+          <marker id="arrow-default" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+            <path d="M 0 1.2 L 9 5 L 0 8.8 z" fill="#8A7D6D"></path>
+          </marker>
+          <!-- Highlighted / Selected Arrowhead -->
+          <marker id="arrow-highlight" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 1.2 L 9 5 L 0 8.8 z" fill="#A8322D"></path>
+          </marker>
+          <!-- Hover Arrowhead -->
+          <marker id="arrow-hover" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 1.2 L 9 5 L 0 8.8 z" fill="#2B547E"></path>
+          </marker>
+        </defs>
+
+        <g id="viewport-group" transform="translate(229.5, 91.9) scale(0.2342)">
+          <g id="edges-layer"><g class="edge-group" data-id="E01"><path class="edge-hit" d="M -642.0 0.0 Q -585.0 0.0 -530.0 0.0"></path><path class="edge-visible" marker-end="url(#arrow-default)" d="M -642.0 0.0 Q -585.0 0.0 -530.0 0.0"></path><g class="edge-label-group" transform="translate(-585.0, 0.0)"><rect class="edge-label-bg" width="108.5" height="20" x="-54.25" y="-10"></rect><text class="edge-label-text">중대한 부탁 위임</text></g></g><g class="edge-group" data-id="E02"><path class="edge-hit" d="M -455.9 -41.5 Q -406.0 -127.5 -334.1 -171.7"></path><path class="edge-visible" marker-end="url(#arrow-default)" d="M -455.9 -41.5 Q -406.0 -127.5 -334.1 -171.7"></path><g class="edge-label-group" transform="translate(-393.1, -114.9)"><rect class="edge-label-bg" width="66.5" height="20" x="-33.25" y="-10"></rect><text class="edge-label-text">교서 하교</text></g></g><g class="edge-group" data-id="E03"><path class="edge-hit" d="M -433.8 13.1 Q -365.0 32.5 -298.1 51.4"></path><path class="edge-visible" marker-end="url(#arrow-default)" d="M -433.8 13.1 Q -365.0 32.5 -298.1 51.4"></path><g class="edge-label-group" transform="translate(-365.0, 32.5)"><rect class="edge-label-bg" width="66.5" height="20" x="-33.25" y="-10"></rect><text class="edge-label-text">효유 명령</text></g></g><g class="edge-group" data-id="E04"><path class="edge-hit" d="M -202.0 65.0 Q -145.0 65.0 -103.0 65.0"></path><path class="edge-visible" marker-end="url(#arrow-default)" d="M -202.0 65.0 Q -145.0 65.0 -103.0 65.0"></path><g class="edge-label-group" transform="translate(-145.0, 65.0)"><rect class="edge-label-bg" width="66.5" height="20" x="-33.25" y="-10"></rect><text class="edge-label-text">왕명 전파</text></g></g><g class="edge-group" data-id="E05"><path class="edge-hit" d="M 21.0 65.0 Q 62.5 65.0 111.0 65.0"></path><path class="edge-visible" marker-end="url(#arrow-default)" d="M 21.0 65.0 Q 62.5 65.0 111.0 65.0"></path><g class="edge-label-group" transform="translate(62.5, 65.0)"><rect class="edge-label-bg" width="98" height="20" x="-49" y="-10"></rect><text class="edge-label-text">전국 공포 대상</text></g></g><g class="edge-group" data-id="E06"><path class="edge-hit" d="M 214.9 36.0 Q 272.5 2.5 336.8 -34.9"></path><path class="edge-visible" marker-end="url(#arrow-default)" d="M 214.9 36.0 Q 272.5 2.5 336.8 -34.9"></path><g class="edge-label-group" transform="translate(272.5, 2.5)"><rect class="edge-label-bg" width="66.5" height="20" x="-33.25" y="-10"></rect><text class="edge-label-text">대상 포함</text></g></g><g class="edge-group" data-id="E07"><path class="edge-hit" d="M 217.0 94.0 Q 272.5 125.0 336.3 160.6"></path><path class="edge-visible" marker-end="url(#arrow-default)" d="M 217.0 94.0 Q 272.5 125.0 336.3 160.6"></path><g class="edge-label-group" transform="translate(272.5, 125.0)"><rect class="edge-label-bg" width="66.5" height="20" x="-33.25" y="-10"></rect><text class="edge-label-text">대상 포함</text></g></g><g class="edge-group" data-id="E08"><path class="edge-hit" d="M -219.5 -207.4 Q 69.0 -220.3 335.6 -82.9"></path><path class="edge-visible" marker-end="url(#arrow-default)" d="M -219.5 -207.4 Q 69.0 -220.3 335.6 -82.9"></path><g class="edge-label-group" transform="translate(59.4, -176.3)"><rect class="edge-label-bg" width="98" height="20" x="-49" y="-10"></rect><text class="edge-label-text">의견 제출 요청</text></g></g><g class="edge-group" data-id="E09"><path class="edge-hit" d="M -219.5 -177.6 Q 72.1 -47.7 340.1 154.8"></path><path class="edge-visible" marker-end="url(#arrow-default)" d="M -219.5 -177.6 Q 72.1 -47.7 340.1 154.8"></path><g class="edge-label-group" transform="translate(60.9, -28.8)"><rect class="edge-label-bg" width="98" height="20" x="-49" y="-10"></rect><text class="edge-label-text">의견 제출 요청</text></g></g><g class="edge-group" data-id="E10"><path class="edge-hit" d="M 422.4 -37.5 Q 497.5 2.5 553.0 32.0"></path><path class="edge-visible" marker-end="url(#arrow-default)" d="M 422.4 -37.5 Q 497.5 2.5 553.0 32.0"></path><g class="edge-label-group" transform="translate(497.5, 2.5)"><rect class="edge-label-bg" width="66.5" height="20" x="-33.25" y="-10"></rect><text class="edge-label-text">실봉 제출</text></g></g><g class="edge-group" data-id="E11"><path class="edge-hit" d="M 422.7 163.2 Q 497.5 125.0 552.0 97.2"></path><path class="edge-visible" marker-end="url(#arrow-default)" d="M 422.7 163.2 Q 497.5 125.0 552.0 97.2"></path><g class="edge-label-group" transform="translate(497.5, 125.0)"><rect class="edge-label-bg" width="66.5" height="20" x="-33.25" y="-10"></rect><text class="edge-label-text">실봉 제출</text></g></g><g class="edge-group" data-id="E12"><path class="edge-hit" d="M 580.2 96.0 Q 34.9 581.5 -446.9 37.4"></path><path class="edge-visible" marker-end="url(#arrow-default)" d="M 580.2 96.0 Q 34.9 581.5 -446.9 37.4"></path><g class="edge-label-group" transform="translate(51.2, 307.0)"><rect class="edge-label-bg" width="66.5" height="20" x="-33.25" y="-10"></rect><text class="edge-label-text">의견 전달</text></g></g><g class="edge-group" data-id="E13"><path class="edge-hit" d="M 636.6 34.0 Q 722.2 -88.6 826.9 -177.6"></path><path class="edge-visible" marker-end="url(#arrow-default)" d="M 636.6 34.0 Q 722.2 -88.6 826.9 -177.6"></path><g class="edge-label-group" transform="translate(731.1, -80.6)"><rect class="edge-label-bg" width="98" height="20" x="-49" y="-10"></rect><text class="edge-label-text">건의 내용 포함</text></g></g><g class="edge-group" data-id="E14"><path class="edge-hit" d="M 663.9 34.0 Q 735.2 -11.3 819.4 -49.4"></path><path class="edge-visible" marker-end="url(#arrow-default)" d="M 663.9 34.0 Q 735.2 -11.3 819.4 -49.4"></path><g class="edge-label-group" transform="translate(737.6, -6.9)"><rect class="edge-label-bg" width="98" height="20" x="-49" y="-10"></rect><text class="edge-label-text">건의 내용 포함</text></g></g><g class="edge-group" data-id="E15"><path class="edge-hit" d="M 676.0 71.1 Q 739.8 77.5 815.1 73.0"></path><path class="edge-visible" marker-end="url(#arrow-default)" d="M 676.0 71.1 Q 739.8 77.5 815.1 73.0"></path><g class="edge-label-group" transform="translate(739.9, 72.5)"><rect class="edge-label-bg" width="98" height="20" x="-49" y="-10"></rect><text class="edge-label-text">건의 내용 포함</text></g></g><g class="edge-group" data-id="E16"><path class="edge-hit" d="M 652.5 96.0 Q 728.0 158.3 818.2 192.3"></path><path class="edge-visible" marker-end="url(#arrow-default)" d="M 652.5 96.0 Q 728.0 158.3 818.2 192.3"></path><g class="edge-label-group" transform="translate(734.0, 147.9)"><rect class="edge-label-bg" width="98" height="20" x="-49" y="-10"></rect><text class="edge-label-text">건의 내용 포함</text></g></g><g class="edge-group" data-id="E17"><path class="edge-hit" d="M 897.3 -174.5 Q 977.2 -86.5 1073.8 -28.0"></path><path class="edge-visible" marker-end="url(#arrow-default)" d="M 897.3 -174.5 Q 977.2 -86.5 1073.8 -28.0"></path><g class="edge-label-group" transform="translate(984.9, -95.7)"><rect class="edge-label-bg" width="87.5" height="20" x="-43.75" y="-10"></rect><text class="edge-label-text">보익 및 개선</text></g></g><g class="edge-group" data-id="E18"><path class="edge-hit" d="M 910.2 -53.8 Q 989.9 -25.4 1067.0 -10.3"></path><path class="edge-visible" marker-end="url(#arrow-default)" d="M 910.2 -53.8 Q 989.9 -25.4 1067.0 -10.3"></path><g class="edge-label-group" transform="translate(991.2, -30.2)"><rect class="edge-label-bg" width="87.5" height="20" x="-43.75" y="-10"></rect><text class="edge-label-text">보익 및 개선</text></g></g><g class="edge-group" data-id="E19"><path class="edge-hit" d="M 910.2 53.8 Q 989.9 25.4 1067.0 10.3"></path><path class="edge-visible" marker-end="url(#arrow-default)" d="M 910.2 53.8 Q 989.9 25.4 1067.0 10.3"></path><g class="edge-label-group" transform="translate(991.2, 30.2)"><rect class="edge-label-bg" width="87.5" height="20" x="-43.75" y="-10"></rect><text class="edge-label-text">보익 및 개선</text></g></g><g class="edge-group" data-id="E20"><path class="edge-hit" d="M 897.3 174.5 Q 977.2 86.5 1073.8 28.0"></path><path class="edge-visible" marker-end="url(#arrow-default)" d="M 897.3 174.5 Q 977.2 86.5 1073.8 28.0"></path><g class="edge-label-group" transform="translate(984.9, 95.7)"><rect class="edge-label-bg" width="87.5" height="20" x="-43.75" y="-10"></rect><text class="edge-label-text">보익 및 개선</text></g></g><g class="edge-group" data-id="E21"><path class="edge-hit" d="M -454.6 40.8 Q -386.1 150.9 -291.4 230.3"></path><path class="edge-visible" marker-end="url(#arrow-default)" d="M -454.6 40.8 Q -386.1 150.9 -291.4 230.3"></path><g class="edge-label-group" transform="translate(-375.6, 141.7)"><rect class="edge-label-bg" width="77" height="20" x="-38.5" y="-10"></rect><text class="edge-label-text">불처벌 약조</text></g></g><g class="edge-group" data-id="E22"><path class="edge-hit" d="M -199.6 277.9 Q 234.3 389.1 576.2 98.0"></path><path class="edge-visible" marker-end="url(#arrow-default)" d="M -199.6 277.9 Q 234.3 389.1 576.2 98.0"></path><g class="edge-label-group" transform="translate(208.4, 277.0)"><rect class="edge-label-bg" width="108.5" height="20" x="-54.25" y="-10"></rect><text class="edge-label-text">제출자 보호 적용</text></g></g></g>
+          <g id="nodes-layer"><g class="node-group" data-id="N_KING" transform="translate(-480.0, 0.0)"><circle r="52" class="node-halo"></circle><circle r="45" class="node-shape" fill="#A8322D" stroke="rgba(255, 253, 249, 0.78)" stroke-width="1.8"></circle><text class="node-title-text" y="-7">국왕 (과인)</text><text class="node-hanja-text" y="11">國王 (寡人)</text></g><g class="node-group" data-id="N_RETIRED_KING" transform="translate(-690.0, 0.0)"><circle r="52" class="node-halo"></circle><circle r="45" class="node-shape" fill="#A8322D" stroke="rgba(255, 253, 249, 0.78)" stroke-width="1.8"></circle><text class="node-title-text" y="-7">상왕</text><text class="node-hanja-text" y="11">上王</text></g><g class="node-group" data-id="N_STATE_COUNCIL" transform="translate(-250.0, 65.0)"><circle r="52" class="node-halo"></circle><circle r="45" class="node-shape" fill="#A8322D" stroke="rgba(255, 253, 249, 0.78)" stroke-width="1.8"></circle><text class="node-title-text" y="-7">의정부</text><text class="node-hanja-text" y="11">議政府</text></g><g class="node-group" data-id="N_OFFICIALS" transform="translate(380.0, -60.0)"><circle r="52" class="node-halo"></circle><circle r="45" class="node-shape" fill="#A8322D" stroke="rgba(255, 253, 249, 0.78)" stroke-width="1.8"></circle><text class="node-title-text" y="-7">문무백료</text><text class="node-hanja-text" y="11">文武百寮</text></g><g class="node-group" data-id="N_SUBJECTS" transform="translate(380.0, 185.0)"><circle r="52" class="node-halo"></circle><circle r="45" class="node-shape" fill="#A8322D" stroke="rgba(255, 253, 249, 0.78)" stroke-width="1.8"></circle><text class="node-title-text" y="-7">서민</text><text class="node-hanja-text" y="11">庶民</text></g><g class="node-group" data-id="N_EDICT" transform="translate(-280.5, -204.7)"><rect x="-64" y="-34" width="128" height="68" rx="18" class="node-halo"></rect><rect x="-58" y="-28" width="116" height="56" rx="14" class="node-shape" fill="#2B547E" stroke="rgba(255, 253, 249, 0.78)" stroke-width="1.8"></rect><text class="node-title-text" y="-7">구언 하교</text><text class="node-hanja-text" y="11">求言 下敎</text></g><g class="node-group" data-id="N_SEALED_PETITION" transform="translate(615.0, 65.0)"><rect x="-64" y="-34" width="128" height="68" rx="18" class="node-halo"></rect><rect x="-58" y="-28" width="116" height="56" rx="14" class="node-shape" fill="#2B547E" stroke="rgba(255, 253, 249, 0.78)" stroke-width="1.8"></rect><text class="node-title-text" y="-7">실봉 계문</text><text class="node-hanja-text" y="11">實封 啓聞</text></g><g class="node-group" data-id="N_PROCLAMATION" transform="translate(-40.0, 65.0)"><rect x="-64" y="-34" width="128" height="68" rx="18" class="node-halo"></rect><rect x="-58" y="-28" width="116" height="56" rx="14" class="node-shape" fill="#2B547E" stroke="rgba(255, 253, 249, 0.78)" stroke-width="1.8"></rect><text class="node-title-text" y="-7">효유</text><text class="node-hanja-text" y="11">曉諭</text></g><g class="node-group" data-id="N_ERRORS" transform="translate(865.0, -210.0)"><circle r="52" class="node-halo"></circle><circle r="45" class="node-shape" fill="#2E6F40" stroke="rgba(255, 253, 249, 0.78)" stroke-width="1.8"></circle><text class="node-title-text" y="-7">국왕의 과실</text><text class="node-hanja-text" y="11">寡人의 過失</text></g><g class="node-group" data-id="N_GRIEVANCES" transform="translate(865.0, -70.0)"><circle r="52" class="node-halo"></circle><circle r="45" class="node-shape" fill="#2E6F40" stroke="rgba(255, 253, 249, 0.78)" stroke-width="1.8"></circle><text class="node-title-text" y="-7">생민의 폐막</text><text class="node-hanja-text" y="11">生民의 弊瘼</text></g><g class="node-group" data-id="N_POLITICS" transform="translate(865.0, 70.0)"><circle r="52" class="node-halo"></circle><circle r="45" class="node-shape" fill="#2E6F40" stroke="rgba(255, 253, 249, 0.78)" stroke-width="1.8"></circle><text class="node-title-text" y="-7">시정의 득실</text><text class="node-hanja-text" y="11">時政의 得失</text></g><g class="node-group" data-id="N_LAWS" transform="translate(865.0, 210.0)"><circle r="52" class="node-halo"></circle><circle r="45" class="node-shape" fill="#2E6F40" stroke="rgba(255, 253, 249, 0.78)" stroke-width="1.8"></circle><text class="node-title-text" y="-7">법도의 장부</text><text class="node-hanja-text" y="11">法度의 臧否</text></g><g class="node-group" data-id="N_NEW_POLITICS" transform="translate(1120.0, 0.0)"><polygon points="56.0,0.0 28.0,48.5 -28.0,48.5 -56.0,0.0 -28.0,-48.5 28.0,-48.5" class="node-halo"></polygon><polygon points="49.0,0.0 24.5,42.4 -24.5,42.4 -49.0,0.0 -24.5,-42.4 24.5,-42.4" class="node-shape" fill="#B5852A" stroke="rgba(255, 253, 249, 0.78)" stroke-width="1.8"></polygon><text class="node-title-text" y="-7">신정</text><text class="node-hanja-text" y="11">新政</text></g><g class="node-group" data-id="N_NON_PUNISHMENT" transform="translate(-250.0, 265.0)"><polygon points="56.0,0.0 28.0,48.5 -28.0,48.5 -56.0,0.0 -28.0,-48.5 28.0,-48.5" class="node-halo"></polygon><polygon points="49.0,0.0 24.5,42.4 -24.5,42.4 -49.0,0.0 -24.5,-42.4 24.5,-42.4" class="node-shape" fill="#B5852A" stroke="rgba(255, 253, 249, 0.78)" stroke-width="1.8"></polygon><text class="node-title-text" y="-7">불처벌 보장</text><text class="node-hanja-text" y="11">不處罰 保障</text></g><g class="node-group" data-id="N_TERRITORY" transform="translate(165.0, 65.0)"><rect x="-55" y="-32" width="110" height="64" rx="4" class="node-halo"></rect><rect x="-49" y="-26" width="98" height="52" rx="3" class="node-shape" fill="#5D4E7B" stroke="rgba(255, 253, 249, 0.78)" stroke-width="1.8"></rect><text class="node-title-text" y="-7">중외</text><text class="node-hanja-text" y="11">中外</text></g></g>
+        </g>
+      </svg>
+
+      <!-- Bottom-Left Shape & Color Legend -->
+      <aside class="canvas-legend" aria-label="범례">
+        <div class="legend-title">클래스별 형태·색상 범례</div>
+        <div class="legend-items">
+          <div class="legend-item">
+            <span class="legend-shape">
+              <svg width="16" height="16"><circle cx="8" cy="8" r="6.5" fill="#A8322D"></circle></svg>
+            </span>
+            <span>주체 (Agent) · 원형</span>
+          </div>
+          <div class="legend-item">
+            <span class="legend-shape">
+              <svg width="16" height="16"><rect x="1.5" y="3" width="13" height="10" rx="3.5" fill="#2B547E"></rect></svg>
+            </span>
+            <span>문서·행위 (Document) · 둥근 사각형</span>
+          </div>
+          <div class="legend-item">
+            <span class="legend-shape">
+              <svg width="16" height="16"><circle cx="8" cy="8" r="6.5" fill="#2E6F40"></circle></svg>
+            </span>
+            <span>건의 대상 (Topic) · 원형</span>
+          </div>
+          <div class="legend-item">
+            <span class="legend-shape">
+              <svg width="16" height="16"><polygon points="8,1 14.5,4.5 14.5,11.5 8,15 1.5,11.5 1.5,4.5" fill="#B5852A"></polygon></svg>
+            </span>
+            <span>정치·결과 (Policy) · 육각형</span>
+          </div>
+          <div class="legend-item">
+            <span class="legend-shape">
+              <svg width="16" height="16"><rect x="2" y="3" width="12" height="10" rx="1" fill="#5D4E7B"></rect></svg>
+            </span>
+            <span>영역 (Scope) · 사각형</span>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Bottom-Right Zoom Controls -->
+      <div class="zoom-controls" aria-label="줌 컨트롤">
+        <button type="button" class="zoom-btn" id="btn-zoom-in" title="확대 (+)">+</button>
+        <button type="button" class="zoom-btn" id="btn-zoom-out" title="축소 (-)">−</button>
+        <button type="button" class="zoom-btn" id="btn-zoom-reset" title="전체 보기 맞춤">⟲</button>
+      </div>
+    </section>
+
+    <!-- RIGHT: DETAIL INSPECTOR & SOURCE TEXT PANEL -->
+    <aside class="inspector-panel" aria-label="상세 정보 인스펙터">
+      <div class="panel-tabs" role="tablist">
+        <button type="button" class="panel-tab active" id="tab-inspector" role="tab" aria-selected="true">상세 정보 인스펙터</button>
+        <button type="button" class="panel-tab" id="tab-source" role="tab" aria-selected="false">사료 원문 보기</button>
+      </div>
+
+      <div class="panel-body">
+        <!-- TAB 1: DETAIL INSPECTOR -->
+        <div class="tab-pane active" id="pane-inspector">
+          <div id="inspector-content">
+        <div class="overview-card">
+          <h3>📜 구언(求言) 교서 사료 구조 안내</h3>
+          <p>
+            그래프의 <strong>노드(15개)</strong> 또는 <strong>간선(22개)</strong>을 클릭하면, 조선 왕조가 언로(言路)를 열어 신민의 직언을 수렴하고 새로운 선정(<strong>신정·新政</strong>)을 도모하는 구조적 관계와 원문 근거를 상세히 분석할 수 있습니다.
+          </p>
+        </div>
+
+        <div class="overview-card">
+          <h3>🧭 핵심 개념 바로가기</h3>
+          <p>아래 주요 키워드를 클릭하면 해당 노드로 즉시 포커스됩니다.</p>
+          <div class="quick-node-grid">
+            
+              <button type="button" class="quick-node-pill" onclick="window.__selectNodeAndFocus('N_KING')">
+                국왕 (과인)
+              </button>
+            
+              <button type="button" class="quick-node-pill" onclick="window.__selectNodeAndFocus('N_RETIRED_KING')">
+                상왕
+              </button>
+            
+              <button type="button" class="quick-node-pill" onclick="window.__selectNodeAndFocus('N_STATE_COUNCIL')">
+                의정부
+              </button>
+            
+              <button type="button" class="quick-node-pill" onclick="window.__selectNodeAndFocus('N_OFFICIALS')">
+                문무백료
+              </button>
+            
+              <button type="button" class="quick-node-pill" onclick="window.__selectNodeAndFocus('N_SUBJECTS')">
+                서민
+              </button>
+            
+              <button type="button" class="quick-node-pill" onclick="window.__selectNodeAndFocus('N_EDICT')">
+                구언 하교
+              </button>
+            
+              <button type="button" class="quick-node-pill" onclick="window.__selectNodeAndFocus('N_SEALED_PETITION')">
+                실봉 계문
+              </button>
+            
+              <button type="button" class="quick-node-pill" onclick="window.__selectNodeAndFocus('N_PROCLAMATION')">
+                효유
+              </button>
+            
+              <button type="button" class="quick-node-pill" onclick="window.__selectNodeAndFocus('N_ERRORS')">
+                국왕의 과실
+              </button>
+            
+              <button type="button" class="quick-node-pill" onclick="window.__selectNodeAndFocus('N_GRIEVANCES')">
+                생민의 폐막
+              </button>
+            
+              <button type="button" class="quick-node-pill" onclick="window.__selectNodeAndFocus('N_POLITICS')">
+                시정의 득실
+              </button>
+            
+              <button type="button" class="quick-node-pill" onclick="window.__selectNodeAndFocus('N_LAWS')">
+                법도의 장부
+              </button>
+            
+              <button type="button" class="quick-node-pill" onclick="window.__selectNodeAndFocus('N_NEW_POLITICS')">
+                신정
+              </button>
+            
+              <button type="button" class="quick-node-pill" onclick="window.__selectNodeAndFocus('N_NON_PUNISHMENT')">
+                불처벌 보장
+              </button>
+            
+              <button type="button" class="quick-node-pill" onclick="window.__selectNodeAndFocus('N_TERRITORY')">
+                중외
+              </button>
+            
+          </div>
+        </div>
+      </div>
+        </div>
+
+        <!-- TAB 2: HISTORICAL SOURCE TEXT -->
+        <div class="tab-pane" id="pane-source">
+          <div class="source-guide">
+            📜 아래 원문에서 <strong>색상 표시된 핵심 구절</strong>을 클릭하면 그래프의 해당 노드로 즉시 이동하고 연결 관계가 강조됩니다.
+          </div>
+
+          <article class="source-article" id="source-article">
+            임금이
+            <button type="button" class="kw-btn document" data-node="N_EDICT">하교(求言 下敎)</button>하기를,<br>
+            “내가 변변치 못한 사람으로서
+            <button type="button" class="kw-btn agent" data-node="N_RETIRED_KING">상왕(上王)</button>으로부터 중대한 부탁을 이어받아 한 나라의 신민의 위에 있게 되었다. 덕이 이미 밝지 못한 데다가 사리(事理)에도 어두워서 대저 한 사람의 보고 듣는 것으로는 수많은 정사가 지극히 번다하여 관찰이 밝지 못하는 바 있고, 지혜가 주도하지 못하는 바 있으니, 마땅히 널리 많은 사람의 말을 채택하여 미치지 못하는 바를 보완하여야 할 것이다.<br>
+            그
+            <button type="button" class="kw-btn scope" data-node="N_TERRITORY">중외(中外)</button>의
+            <button type="button" class="kw-btn agent" data-node="N_OFFICIALS">문무 백료(文武百寮)</button>와 아래로는
+            <button type="button" class="kw-btn agent" data-node="N_SUBJECTS">서민</button>에 이르기까지
+            <button type="button" class="kw-btn agent" data-node="N_KING">과인(寡人)</button>의
+            <button type="button" class="kw-btn topic" data-node="N_ERRORS">과실</button>과
+            <button type="button" class="kw-btn topic" data-node="N_GRIEVANCES">생민의 폐막(弊瘼)</button>과
+            <button type="button" class="kw-btn topic" data-node="N_POLITICS">시정(時政)의 득실(得失)</button>과
+            <button type="button" class="kw-btn topic" data-node="N_LAWS">법도의 장부(臧否)</button> 등 무릇
+            <button type="button" class="kw-btn policy" data-node="N_NEW_POLITICS">신정(新政)</button>에 보익할 만할 것이 있다면, 각기 그 소견을
+            <button type="button" class="kw-btn document" data-node="N_SEALED_PETITION">실봉(實封)하여 계문</button>하되, 기휘(忌諱)함도 구애하지 말 것이며, 절직(切直)함도 혐의하지 말고, 다 숨김없이 진달하여 내 잘 다스리려고 원하는 이 마음에 부응하도록 하라.<br>
+            그 말에 채택할 만한 것이 있으면 내 즉시 아름답게 받아들일 것이고 혹은 비록 맞지 않더라도 또한
+            <button type="button" class="kw-btn policy" data-node="N_NON_PUNISHMENT">죄 주지는 않을 것이다</button>. 바라건대
+            <button type="button" class="kw-btn agent" data-node="N_STATE_COUNCIL">의정부(議政府)</button>에서는 나의 지극한 이 마음을 몸받아서 중외에
+            <button type="button" class="kw-btn document" data-node="N_PROCLAMATION">효유(曉諭)</button>하도록 하라.”<br>
+            하였다.
+          </article>
+
+          <div class="source-mini-preview" id="source-mini-preview"></div>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <!-- NON-BLOCKING TOAST NOTIFICATION -->
+  <div class="toast-message" id="toast-message" role="status" aria-live="polite"></div>
+
+  <script>
+    /* ==========================================================================
+       1. ONTOLOGY DATA SPECIFICATION (15 NODES & 22 RELATIONSHIPS)
+       ========================================================================== */
+    const CLASS_META = {
+      agent: {
+        key: "agent",
+        label: "주체 (Agent)",
+        shortLabel: "주체",
+        color: "#A8322D",
+        shape: "circle"
+      },
+      document: {
+        key: "document",
+        label: "문서·행위 (Document/Action)",
+        shortLabel: "문서·행위",
+        color: "#2B547E",
+        shape: "roundRect"
+      },
+      topic: {
+        key: "topic",
+        label: "건의 대상 (Topic)",
+        shortLabel: "건의 대상",
+        color: "#2E6F40",
+        shape: "circle"
+      },
+      policy: {
+        key: "policy",
+        label: "정치·결과 (Policy/Outcome)",
+        shortLabel: "정치·결과",
+        color: "#B5852A",
+        shape: "hexagon"
+      },
+      scope: {
+        key: "scope",
+        label: "영역 (Scope)",
+        shortLabel: "영역",
+        color: "#5D4E7B",
+        shape: "rect"
+      }
+    };
+
+    const NODES_DATA = [
+      {
+        id: "N_KING",
+        cls: "agent",
+        name: "국왕 (과인)",
+        hanja: "國王 (寡人)",
+        desc: "상왕의 뜻을 이어받아 덕과 사리의 부족함을 보완하고 신정(新政)을 펼치고자 구언 하교를 내리는 최고 통치자.",
+        quote: "내가 변변치 못한 사람으로서 상왕(上王)으로부터 중대한 부탁을 이어받아 한 나라의 신민의 위에 있게 되었다."
+      },
+      {
+        id: "N_RETIRED_KING",
+        cls: "agent",
+        name: "상왕",
+        hanja: "上王",
+        desc: "현 국왕에게 대통과 중대한 국정 운영의 책무를 물려준 전임 통치자.",
+        quote: "상왕(上王)으로부터 중대한 부탁을 이어받아"
+      },
+      {
+        id: "N_STATE_COUNCIL",
+        cls: "agent",
+        name: "의정부",
+        hanja: "議政府",
+        desc: "국왕의 지극한 뜻을 받들어 중앙과 지방(중외)에 교서를 널리 알리는 최고 국정 통괄 기관.",
+        quote: "바라건대 의정부(議政府)에서는 나의 지극한 이 마음을 몸받아서 중외에 효유(曉諭)하도록 하라."
+      },
+      {
+        id: "N_OFFICIALS",
+        cls: "agent",
+        name: "문무백료",
+        hanja: "文武百寮",
+        desc: "중앙 조정과 지방 관아에 소속된 모든 문관 및 무관 신료 집단.",
+        quote: "그 중외(中外)의 문무 백료(文武百寮)와"
+      },
+      {
+        id: "N_SUBJECTS",
+        cls: "agent",
+        name: "서민",
+        hanja: "庶民",
+        desc: "관직이 없는 일반 백성으로, 구언 교서의 의견 제출 대상에 포함된 피치자 집단.",
+        quote: "아래로는 서민에 이르기까지"
+      },
+      {
+        id: "N_EDICT",
+        cls: "document",
+        name: "구언 하교",
+        hanja: "求言 下敎",
+        desc: "언로(言路)를 개방하여 직언을 구하고 수용하겠다는 국왕의 공식 명령 교서.",
+        quote: "임금이 하교하기를, ... 마땅히 널리 많은 사람의 말을 채택하여 미치지 못하는 바를 보완하여야 할 것이다."
+      },
+      {
+        id: "N_SEALED_PETITION",
+        cls: "document",
+        name: "실봉 계문",
+        hanja: "實封 啓聞",
+        desc: "기휘(꺼림)나 혐의 없이 솔직하고 절실한 소견을 밀봉하여 국왕에게 직접 올리는 서면 상소 방식.",
+        quote: "각기 그 소견을 실봉(實封)하여 계문하되, 기휘(忌諱)함도 구애하지 말 것이며, 절직(切直)함도 혐의하지 말고, 다 숨김없이 진달하여"
+      },
+      {
+        id: "N_PROCLAMATION",
+        cls: "document",
+        name: "효유",
+        hanja: "曉諭",
+        desc: "의정부가 왕명을 받들어 온 나라의 신민이 알 수 있도록 널리 공포하고 깨우치는 행위.",
+        quote: "나의 지극한 이 마음을 몸받아서 중외에 효유(曉諭)하도록 하라."
+      },
+      {
+        id: "N_ERRORS",
+        cls: "topic",
+        name: "국왕의 과실",
+        hanja: "寡人의 過失",
+        desc: "통치자 개인의 덕성 부족, 사리 판단의 어두움 및 국정 운영상의 잘못.",
+        quote: "과인(寡人)의 과실과"
+      },
+      {
+        id: "N_GRIEVANCES",
+        cls: "topic",
+        name: "생민의 폐막",
+        hanja: "生民의 弊瘼",
+        desc: "백성들이 실제 삶에서 겪는 민생의 고통과 고질적인 제도적 폐단.",
+        quote: "생민의 폐막(弊瘼)과"
+      },
+      {
+        id: "N_POLITICS",
+        cls: "topic",
+        name: "시정의 득실",
+        hanja: "時政의 得失",
+        desc: "현재 시행되고 있는 정사(政事)의 잘된 점과 잘못된 점.",
+        quote: "시정(時政)의 득실(得失)과"
+      },
+      {
+        id: "N_LAWS",
+        cls: "topic",
+        name: "법도의 장부",
+        hanja: "法度의 臧否",
+        desc: "기존 법률과 국가 제도의 옳고 그름 및 선악·장단점.",
+        quote: "법도의 장부(臧否) 등"
+      },
+      {
+        id: "N_NEW_POLITICS",
+        cls: "policy",
+        name: "신정",
+        hanja: "新政",
+        desc: "신민의 직언을 수용하여 통치자의 부족함을 보완하고 새롭게 펼치고자 하는 선정(善政).",
+        quote: "무릇 신정(新政)에 보익할 만할 것이 있다면 ... 내 잘 다스리려고 원하는 이 마음에 부응하도록 하라."
+      },
+      {
+        id: "N_NON_PUNISHMENT",
+        cls: "policy",
+        name: "불처벌 보장",
+        hanja: "不處罰 保障",
+        desc: "올린 말이 채택할 만하면 기쁘게 받아들이고, 설령 사실이나 뜻에 맞지 않더라도 죄를 묻지 않겠다는 국왕의 제도적 약조.",
+        quote: "그 말에 채택할 만한 것이 있으면 내 즉시 아름답게 받아들일 것이고 혹은 비록 맞지 않더라도 또한 죄 주지는 않을 것이다."
+      },
+      {
+        id: "N_TERRITORY",
+        cls: "scope",
+        name: "중외",
+        hanja: "中外",
+        desc: "왕도(중앙 조정)와 팔도(지방)를 아우르는 나라 전체의 공간적·사회적 범위.",
+        quote: "그 중외(中外)의 문무 백료(文武百寮)와 ... 중외에 효유(曉諭)하도록 하라."
+      }
+    ];
+
+    const EDGES_DATA = [
+      { id: "E01", from: "N_RETIRED_KING", to: "N_KING", label: "중대한 부탁 위임", code: "DELEGATES_POWER_TO", curve: 0, desc: "전임 통치자인 상왕이 현 국왕에게 국가 통치의 중대한 책무를 물려주며 왕권 승계의 정통성과 사명을 부여합니다." },
+      { id: "E02", from: "N_KING", to: "N_EDICT", label: "교서 하교", code: "ISSUES", curve: -18, desc: "국왕이 자신의 덕과 사리 판단의 한계를 보완하기 위해 널리 신민의 말을 듣겠다는 구언 하교를 발령합니다." },
+      { id: "E03", from: "N_KING", to: "N_STATE_COUNCIL", label: "효유 명령", code: "COMMANDS", curve: 0, desc: "국왕이 최고 행정 기관인 의정부에 자신의 지극한 구언 의지를 받들어 온 나라에 알리도록 명합니다." },
+      { id: "E04", from: "N_STATE_COUNCIL", to: "N_PROCLAMATION", label: "왕명 전파", code: "PROCLAIMS", curve: 0, desc: "의정부가 왕명을 받들어 중앙과 지방의 백성들이 모두 알 수 있도록 공식 공포 절차(효유)를 실행합니다." },
+      { id: "E05", from: "N_PROCLAMATION", to: "N_TERRITORY", label: "전국 공포 대상", code: "TARGETS", curve: 0, desc: "효유 행위는 도성(中)뿐 아니라 지방 팔도(外)에 이르는 나라 전체를 대상으로 시행됩니다." },
+      { id: "E06", from: "N_TERRITORY", to: "N_OFFICIALS", label: "대상 포함", code: "INCLUDES", curve: 0, desc: "중외라는 공간적·사회적 범위 안에 중앙과 지방의 모든 문무관 직속 신료들이 포함됩니다." },
+      { id: "E07", from: "N_TERRITORY", to: "N_SUBJECTS", label: "대상 포함", code: "INCLUDES", curve: 0, desc: "중외라는 범위 안에는 관직이 없는 일반 백성(서민)까지 폭넓게 포함됩니다." },
+      { id: "E08", from: "N_EDICT", to: "N_OFFICIALS", label: "의견 제출 요청", code: "REQUESTS_INPUT", curve: -45, desc: "구언 하교는 문무백료에게 기휘나 혐의에 구애받지 말고 국정 쇄신을 위한 직언을 올릴 것을 요청합니다." },
+      { id: "E09", from: "N_EDICT", to: "N_SUBJECTS", label: "의견 제출 요청", code: "REQUESTS_INPUT", curve: -22, desc: "구언 하교는 신분의 높낮이를 막론하고 아래로 서민에 이르기까지 숨김없이 소견을 진달할 것을 요청합니다." },
+      { id: "E10", from: "N_OFFICIALS", to: "N_SEALED_PETITION", label: "실봉 제출", code: "SUBMITS", curve: 0, desc: "문무백료가 각자의 시정 건의와 직언을 외부 유출 없이 밀봉한 서면(실봉 계문)으로 작성하여 올립니다." },
+      { id: "E11", from: "N_SUBJECTS", to: "N_SEALED_PETITION", label: "실봉 제출", code: "SUBMITS", curve: 0, desc: "일반 서민들도 민생의 고통과 폐단을 담아 밀봉 상소(실봉 계문) 형태로 국왕에게 의견을 제출합니다." },
+      { id: "E12", from: "N_SEALED_PETITION", to: "N_KING", label: "의견 전달", code: "DELIVERED_TO", curve: -275, desc: "밀봉된 상소문(실봉 계문)은 중간 검열이나 왜곡을 거치지 않고 최고 통치자인 국왕에게 직접 전달됩니다." },
+      { id: "E13", from: "N_SEALED_PETITION", to: "N_ERRORS", label: "건의 내용 포함", code: "CONTAINS", curve: -12, desc: "실봉 계문에는 통치자 개인의 덕성 부족 및 국정 판단 착오(국왕의 과실)에 대한 직언이 담깁니다." },
+      { id: "E14", from: "N_SEALED_PETITION", to: "N_GRIEVANCES", label: "건의 내용 포함", code: "CONTAINS", curve: -5, desc: "실봉 계문에는 백성들이 현장에서 겪는 민생의 고통과 제도적 폐단(생민의 폐막)이 담깁니다." },
+      { id: "E15", from: "N_SEALED_PETITION", to: "N_POLITICS", label: "건의 내용 포함", code: "CONTAINS", curve: 5, desc: "실봉 계문에는 현재 조정에서 시행 중인 각종 정사의 잘잘못(시정의 득실)에 대한 평가가 담깁니다." },
+      { id: "E16", from: "N_SEALED_PETITION", to: "N_LAWS", label: "건의 내용 포함", code: "CONTAINS", curve: 12, desc: "실봉 계문에는 기존 법률과 국가 제도의 옳고 그름(법도의 장부)에 관한 쇄신 의견이 담깁니다." },
+      { id: "E17", from: "N_ERRORS", to: "N_NEW_POLITICS", label: "보익 및 개선", code: "CONTRIBUTES_TO", curve: 12, desc: "국왕의 과실에 대한 직언을 수용함으로써 통치자의 부족함을 보완하고 새로운 선정(신정)을 이룹니다." },
+      { id: "E18", from: "N_GRIEVANCES", to: "N_NEW_POLITICS", label: "보익 및 개선", code: "CONTRIBUTES_TO", curve: 5, desc: "생민의 폐막을 혁파하는 건의가 반영되어 백성의 삶을 안정시키는 신정(新政)에 보탬이 됩니다." },
+      { id: "E19", from: "N_POLITICS", to: "N_NEW_POLITICS", label: "보익 및 개선", code: "CONTRIBUTES_TO", curve: -5, desc: "시정의 득실을 가려 잘못된 정책을 바로잡음으로써 신정(新政)의 실효성을 높입니다." },
+      { id: "E20", from: "N_LAWS", to: "N_NEW_POLITICS", label: "보익 및 개선", code: "CONTRIBUTES_TO", curve: -12, desc: "법도의 장부를 헤아려 제도를 정비함으로써 국가 통치 기강을 세우는 신정(新政)에 기여합니다." },
+      { id: "E21", from: "N_KING", to: "N_NON_PUNISHMENT", label: "불처벌 약조", code: "GUARANTEES", curve: 14, desc: "국왕이 직언의 내용이 비록 뜻에 맞지 않더라도 결코 죄를 묻지 않겠다는 제도적 안전장치를 약속합니다." },
+      { id: "E22", from: "N_NON_PUNISHMENT", to: "N_SEALED_PETITION", label: "제출자 보호 적용", code: "APPLIES_TO", curve: 115, desc: "불처벌 보장의 원칙이 실봉 계문 제출 행위 전반에 적용되어 신료와 서민이 두려움 없이 직언할 수 있게 합니다." }
+    ];
+
+    /* ==========================================================================
+       2. LAYOUT PRESETS (FLOW, HIERARCHY, RADIAL)
+       ========================================================================== */
+    const LAYOUT_PRESETS = {
+      flow: {
+        N_RETIRED_KING:    { x: -690, y: 0 },
+        N_KING:            { x: -480, y: 0 },
+        N_EDICT:           { x: -250, y: -175 },
+        N_STATE_COUNCIL:   { x: -250, y: 65 },
+        N_NON_PUNISHMENT:  { x: -250, y: 265 },
+        N_PROCLAMATION:    { x: -40,  y: 65 },
+        N_TERRITORY:       { x: 165,  y: 65 },
+        N_OFFICIALS:       { x: 380,  y: -60 },
+        N_SUBJECTS:        { x: 380,  y: 185 },
+        N_SEALED_PETITION: { x: 615,  y: 65 },
+        N_ERRORS:          { x: 865,  y: -210 },
+        N_GRIEVANCES:      { x: 865,  y: -70 },
+        N_POLITICS:        { x: 865,  y: 70 },
+        N_LAWS:            { x: 865,  y: 210 },
+        N_NEW_POLITICS:    { x: 1120, y: 0 }
+      },
+      hierarchy: {
+        N_RETIRED_KING:    { x: 0,    y: -420 },
+        N_KING:            { x: 0,    y: -290 },
+        N_EDICT:           { x: -260, y: -150 },
+        N_STATE_COUNCIL:   { x: 0,    y: -150 },
+        N_NON_PUNISHMENT:  { x: 260,  y: -150 },
+        N_PROCLAMATION:    { x: 0,    y: -20 },
+        N_TERRITORY:       { x: 0,    y: 105 },
+        N_OFFICIALS:       { x: -170, y: 235 },
+        N_SUBJECTS:        { x: 170,  y: 235 },
+        N_SEALED_PETITION: { x: 0,    y: 375 },
+        N_ERRORS:          { x: -330, y: 525 },
+        N_GRIEVANCES:      { x: -110, y: 525 },
+        N_POLITICS:        { x: 110,  y: 525 },
+        N_LAWS:            { x: 330,  y: 525 },
+        N_NEW_POLITICS:    { x: 0,    y: 675 }
+      },
+      radial: {
+        N_KING:            { x: 0,    y: 0 },
+        N_RETIRED_KING:    { x: -230, y: -90 },
+        N_EDICT:           { x: -120, y: -220 },
+        N_STATE_COUNCIL:   { x: 150,  y: -195 },
+        N_NON_PUNISHMENT:  { x: -170, y: 185 },
+        N_SEALED_PETITION: { x: 210,  y: 140 },
+        N_PROCLAMATION:    { x: 320,  y: -250 },
+        N_TERRITORY:       { x: 430,  y: -95 },
+        N_OFFICIALS:       { x: 110,  y: -380 },
+        N_SUBJECTS:        { x: 450,  y: 65 },
+        N_ERRORS:          { x: 430,  y: 230 },
+        N_GRIEVANCES:      { x: 270,  y: 350 },
+        N_POLITICS:        { x: 65,   y: 395 },
+        N_LAWS:            { x: -140, y: 365 },
+        N_NEW_POLITICS:    { x: 220,  y: 535 }
+      }
+    };
+
+    /* ==========================================================================
+       3. APPLICATION STATE
+       ========================================================================== */
+    const state = {
+      nodes: NODES_DATA.map(n => ({
+        ...n,
+        x: LAYOUT_PRESETS.flow[n.id].x,
+        y: LAYOUT_PRESETS.flow[n.id].y
+      })),
+      edges: EDGES_DATA.map(e => ({ ...e })),
+      selectedNodeId: null,
+      selectedEdgeId: null,
+      activeFilter: "all",
+      searchQuery: "",
+      currentLayout: "flow",
+      transform: { x: 0, y: 0, scale: 1 },
+      animFrameId: null
+    };
+
+    const nodeMap = new Map(state.nodes.map(n => [n.id, n]));
+
+    /* ==========================================================================
+       4. DOM REFERENCES
+       ========================================================================== */
+    const svgEl = document.getElementById("graph-svg");
+    const viewportGroup = document.getElementById("viewport-group");
+    const edgesLayer = document.getElementById("edges-layer");
+    const nodesLayer = document.getElementById("nodes-layer");
+    const canvasWrapper = document.getElementById("canvas-wrapper");
+
+    const inspectorContent = document.getElementById("inspector-content");
+    const tabInspector = document.getElementById("tab-inspector");
+    const tabSource = document.getElementById("tab-source");
+    const paneInspector = document.getElementById("pane-inspector");
+    const paneSource = document.getElementById("pane-source");
+    const sourceMiniPreview = document.getElementById("source-mini-preview");
+
+    const searchInput = document.getElementById("search-input");
+    const searchClear = document.getElementById("search-clear");
+    const toastEl = document.getElementById("toast-message");
+
+    let toastTimer = null;
+    function showToast(msg) {
+      toastEl.textContent = msg;
+      toastEl.classList.add("show");
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => {
+        toastEl.classList.remove("show");
+      }, 2600);
+    }
+
+    /* ==========================================================================
+       5. GEOMETRY & SHAPE BOUNDARY INTERSECTION HELPERS
+       ========================================================================== */
+    function getHexagonPoints(radius) {
+      const pts = [];
+      for (let i = 0; i < 6; i++) {
+        const angle = (Math.PI / 3) * i;
+        pts.push(`${(radius * Math.cos(angle)).toFixed(1)},${(radius * Math.sin(angle)).toFixed(1)}`);
+      }
+      return pts.join(" ");
+    }
+
+    /**
+     * Computes the exact point on a node's outer boundary along the ray from (cx, cy) toward (tx, ty)
+     * so directional arrows stop cleanly right outside the node border.
+     */
+    function getBoundaryPoint(node, tx, ty, extraPadding = 4) {
+      const dx = tx - node.x;
+      const dy = ty - node.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist < 1e-4) return { x: node.x, y: node.y };
+
+      const ux = dx / dist;
+      const uy = dy / dist;
+      const shape = CLASS_META[node.cls].shape;
+
+      if (shape === "circle") {
+        const r = 45 + extraPadding;
+        return { x: node.x + ux * r, y: node.y + uy * r };
+      }
+
+      if (shape === "hexagon") {
+        // Approximate hexagon radius cleanly
+        const r = 49 + extraPadding;
+        return { x: node.x + ux * r, y: node.y + uy * r };
+      }
+
+      // Rectangle or Rounded Rectangle
+      const halfW = (shape === "roundRect" ? 58 : 49) + extraPadding;
+      const halfH = (shape === "roundRect" ? 28 : 26) + extraPadding;
+      const scaleX = Math.abs(ux) > 1e-4 ? halfW / Math.abs(ux) : Infinity;
+      const scaleY = Math.abs(uy) > 1e-4 ? halfH / Math.abs(uy) : Infinity;
+      const t = Math.min(scaleX, scaleY);
+      return { x: node.x + ux * t, y: node.y + uy * t };
+    }
+
+    /**
+     * Computes quadratic Bezier path data and label midpoint for an edge.
+     */
+    function computeEdgeGeometry(edge) {
+      const src = nodeMap.get(edge.from);
+      const tgt = nodeMap.get(edge.to);
+      const dx = tgt.x - src.x;
+      const dy = tgt.y - src.y;
+      const dist = Math.hypot(dx, dy) || 1;
+
+      // Unit normal vector (perpendicular to src -> tgt)
+      const nx = -dy / dist;
+      const ny = dx / dist;
+
+      // Curve offset depends on preset in flow mode, or gentle curvature in other layouts
+      let offset = edge.curve || 0;
+      if (state.currentLayout !== "flow") {
+        // Special handling for long feedback edge in hierarchy/radial mode
+        if (edge.id === "E12") offset = -140;
+        else if (edge.id === "E22") offset = 95;
+        else offset = offset * 0.35;
+      }
+
+      const midX = (src.x + tgt.x) / 2 + nx * offset;
+      const midY = (src.y + tgt.y) / 2 + ny * offset;
+
+      // Control point for quadratic Bezier so curve passes through (midX, midY) at t=0.5
+      // P(0.5) = 0.25*P0 + 0.5*C + 0.25*P2 => C = 2*Mid - 0.5*(P0 + P2)
+      const ctrlX = 2 * midX - 0.5 * (src.x + tgt.x);
+      const ctrlY = 2 * midY - 0.5 * (src.y + tgt.y);
+
+      const startPt = getBoundaryPoint(src, ctrlX, ctrlY, 3);
+      const endPt = getBoundaryPoint(tgt, ctrlX, ctrlY, 5);
+
+      const d = `M ${startPt.x.toFixed(1)} ${startPt.y.toFixed(1)} Q ${ctrlX.toFixed(1)} ${ctrlY.toFixed(1)} ${endPt.x.toFixed(1)} ${endPt.y.toFixed(1)}`;
+
+      return { d, labelX: midX, labelY: midY };
+    }
+
+    /* ==========================================================================
+       6. SVG GRAPH RENDERING & STATE SYNCHRONIZATION
+       ========================================================================== */
+    const edgeElements = new Map();
+    const nodeElements = new Map();
+
+    function buildGraphDOM() {
+      edgesLayer.innerHTML = "";
+      nodesLayer.innerHTML = "";
+      edgeElements.clear();
+      nodeElements.clear();
+
+      // 1. Render Edges
+      state.edges.forEach(edge => {
+        const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        g.setAttribute("class", "edge-group");
+        g.setAttribute("data-id", edge.id);
+
+        const hitPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        hitPath.setAttribute("class", "edge-hit");
+
+        const visPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        visPath.setAttribute("class", "edge-visible");
+        visPath.setAttribute("marker-end", "url(#arrow-default)");
+
+        const labelG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        labelG.setAttribute("class", "edge-label-group");
+
+        const labelBg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+        labelBg.setAttribute("class", "edge-label-bg");
+        const pillWidth = Math.max(54, edge.label.length * 10.5 + 14);
+        labelBg.setAttribute("width", pillWidth);
+        labelBg.setAttribute("height", 20);
+        labelBg.setAttribute("x", -pillWidth / 2);
+        labelBg.setAttribute("y", -10);
+
+        const labelText = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        labelText.setAttribute("class", "edge-label-text");
+        labelText.textContent = edge.label;
+
+        labelG.appendChild(labelBg);
+        labelG.appendChild(labelText);
+
+        g.appendChild(hitPath);
+        g.appendChild(visPath);
+        g.appendChild(labelG);
+
+        // Hover marker swap
+        g.addEventListener("pointerenter", () => {
+          if (!g.classList.contains("highlighted") && !g.classList.contains("selected")) {
+            visPath.setAttribute("marker-end", "url(#arrow-hover)");
+          }
+        });
+        g.addEventListener("pointerleave", () => {
+          if (!g.classList.contains("highlighted") && !g.classList.contains("selected")) {
+            visPath.setAttribute("marker-end", "url(#arrow-default)");
+          }
+        });
+
+        // Edge Click Event
+        g.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          selectEdge(edge.id);
+        });
+
+        edgesLayer.appendChild(g);
+        edgeElements.set(edge.id, { g, hitPath, visPath, labelG });
+      });
+
+      // 2. Render Nodes
+      state.nodes.forEach(node => {
+        const meta = CLASS_META[node.cls];
+        const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        g.setAttribute("class", "node-group");
+        g.setAttribute("data-id", node.id);
+
+        // Selection Halo
+        let haloEl;
+        let shapeEl;
+
+        if (meta.shape === "circle") {
+          haloEl = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+          haloEl.setAttribute("r", 52);
+
+          shapeEl = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+          shapeEl.setAttribute("r", 45);
+        } else if (meta.shape === "roundRect") {
+          haloEl = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+          haloEl.setAttribute("x", -64);
+          haloEl.setAttribute("y", -34);
+          haloEl.setAttribute("width", 128);
+          haloEl.setAttribute("height", 68);
+          haloEl.setAttribute("rx", 18);
+
+          shapeEl = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+          shapeEl.setAttribute("x", -58);
+          shapeEl.setAttribute("y", -28);
+          shapeEl.setAttribute("width", 116);
+          shapeEl.setAttribute("height", 56);
+          shapeEl.setAttribute("rx", 14);
+        } else if (meta.shape === "hexagon") {
+          haloEl = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+          haloEl.setAttribute("points", getHexagonPoints(56));
+
+          shapeEl = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+          shapeEl.setAttribute("points", getHexagonPoints(49));
+        } else {
+          // Scope: sharp/crisp rectangle
+          haloEl = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+          haloEl.setAttribute("x", -55);
+          haloEl.setAttribute("y", -32);
+          haloEl.setAttribute("width", 110);
+          haloEl.setAttribute("height", 64);
+          haloEl.setAttribute("rx", 4);
+
+          shapeEl = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+          shapeEl.setAttribute("x", -49);
+          shapeEl.setAttribute("y", -26);
+          shapeEl.setAttribute("width", 98);
+          shapeEl.setAttribute("height", 52);
+          shapeEl.setAttribute("rx", 3);
+        }
+
+        haloEl.setAttribute("class", "node-halo");
+        shapeEl.setAttribute("class", "node-shape");
+        shapeEl.setAttribute("fill", meta.color);
+        shapeEl.setAttribute("stroke", "rgba(255, 253, 249, 0.78)");
+        shapeEl.setAttribute("stroke-width", "1.8");
+
+        const titleText = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        titleText.setAttribute("class", "node-title-text");
+        titleText.setAttribute("y", -7);
+        titleText.textContent = node.name;
+
+        const hanjaText = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        hanjaText.setAttribute("class", "node-hanja-text");
+        hanjaText.setAttribute("y", 11);
+        hanjaText.textContent = node.hanja;
+
+        g.appendChild(haloEl);
+        g.appendChild(shapeEl);
+        g.appendChild(titleText);
+        g.appendChild(hanjaText);
+
+        // Attach unified pointer drag + click handlers
+        attachNodePointerEvents(g, node);
+
+        nodesLayer.appendChild(g);
+        nodeElements.set(node.id, { g });
+      });
+
+      updatePositions();
+      updateVisualHighlights();
+    }
+
+    function updatePositions() {
+      // Update nodes
+      state.nodes.forEach(node => {
+        const el = nodeElements.get(node.id);
+        if (el) {
+          el.g.setAttribute("transform", `translate(${node.x.toFixed(1)}, ${node.y.toFixed(1)})`);
+        }
+      });
+
+      // Update edges
+      state.edges.forEach(edge => {
+        const el = edgeElements.get(edge.id);
+        if (el) {
+          const geom = computeEdgeGeometry(edge);
+          el.hitPath.setAttribute("d", geom.d);
+          el.visPath.setAttribute("d", geom.d);
+          el.labelG.setAttribute("transform", `translate(${geom.labelX.toFixed(1)}, ${geom.labelY.toFixed(1)})`);
+        }
+      });
+    }
+
+    function applyViewportTransform() {
+      const { x, y, scale } = state.transform;
+      viewportGroup.setAttribute("transform", `translate(${x.toFixed(1)}, ${y.toFixed(1)}) scale(${scale.toFixed(4)})`);
+    }
+
+    /* ==========================================================================
+       7. HIGHLIGHTING, FILTERING & SEARCH VISUAL LOGIC
+       ========================================================================== */
+    function updateVisualHighlights() {
+      const q = state.searchQuery.trim().toLowerCase();
+      const filter = state.activeFilter;
+
+      // Determine active set of nodes & edges
+      let highlightedNodeIds = null;
+      let highlightedEdgeIds = null;
+
+      if (state.selectedNodeId) {
+        highlightedNodeIds = new Set([state.selectedNodeId]);
+        highlightedEdgeIds = new Set();
+        state.edges.forEach(e => {
+          if (e.from === state.selectedNodeId || e.to === state.selectedNodeId) {
+            highlightedEdgeIds.add(e.id);
+            highlightedNodeIds.add(e.from);
+            highlightedNodeIds.add(e.to);
+          }
+        });
+      } else if (state.selectedEdgeId) {
+        const edge = state.edges.find(e => e.id === state.selectedEdgeId);
+        if (edge) {
+          highlightedEdgeIds = new Set([edge.id]);
+          highlightedNodeIds = new Set([edge.from, edge.to]);
+        }
+      } else if (q.length > 0 || filter !== "all") {
+        highlightedNodeIds = new Set();
+        highlightedEdgeIds = new Set();
+        state.nodes.forEach(n => {
+          const matchesFilter = filter === "all" || n.cls === filter;
+          const matchesQuery = q.length === 0 ||
+            n.name.toLowerCase().includes(q) ||
+            n.hanja.toLowerCase().includes(q) ||
+            n.desc.toLowerCase().includes(q) ||
+            n.quote.toLowerCase().includes(q);
+          if (matchesFilter && matchesQuery) {
+            highlightedNodeIds.add(n.id);
+          }
+        });
+        state.edges.forEach(e => {
+          if (highlightedNodeIds.has(e.from) && highlightedNodeIds.has(e.to)) {
+            highlightedEdgeIds.add(e.id);
+          }
+        });
+      }
+
+      // Apply classes to nodes
+      state.nodes.forEach(node => {
+        const el = nodeElements.get(node.id);
+        if (!el) return;
+        const isSel = state.selectedNodeId === node.id;
+        el.g.classList.toggle("selected", isSel);
+
+        if (highlightedNodeIds) {
+          el.g.classList.toggle("dimmed", !highlightedNodeIds.has(node.id));
+        } else {
+          el.g.classList.remove("dimmed");
+        }
+      });
+
+      // Apply classes to edges
+      state.edges.forEach(edge => {
+        const el = edgeElements.get(edge.id);
+        if (!el) return;
+        const isSel = state.selectedEdgeId === edge.id;
+        const isHi = highlightedEdgeIds ? highlightedEdgeIds.has(edge.id) : false;
+
+        el.g.classList.toggle("selected", isSel);
+        el.g.classList.toggle("highlighted", isHi && (state.selectedNodeId !== null || state.selectedEdgeId !== null));
+
+        if (isSel || (isHi && (state.selectedNodeId !== null || state.selectedEdgeId !== null))) {
+          el.visPath.setAttribute("marker-end", "url(#arrow-highlight)");
+        } else {
+          el.visPath.setAttribute("marker-end", "url(#arrow-default)");
+        }
+
+        if (highlightedEdgeIds) {
+          el.g.classList.toggle("dimmed", !highlightedEdgeIds.has(edge.id));
+        } else {
+          el.g.classList.remove("dimmed");
+        }
+      });
+
+      // Sync active keyword highlights in Source Text tab
+      document.querySelectorAll(".kw-btn").forEach(btn => {
+        btn.classList.toggle("active", btn.getAttribute("data-node") === state.selectedNodeId);
+      });
+    }
+
+    /* ==========================================================================
+       8. POINTER INTERACTION: NODE DRAG, CLICK, CANVAS PAN & ZOOM
+       ========================================================================== */
+    function attachNodePointerEvents(groupEl, node) {
+      let isPointerDown = false;
+      let hasDragged = false;
+      let startClientX = 0;
+      let startClientY = 0;
+      let origX = 0;
+      let origY = 0;
+
+      groupEl.addEventListener("pointerdown", (ev) => {
+        if (ev.button !== 0 && ev.pointerType === "mouse") return;
+        ev.stopPropagation();
+        isPointerDown = true;
+        hasDragged = false;
+        startClientX = ev.clientX;
+        startClientY = ev.clientY;
+        origX = node.x;
+        origY = node.y;
+        groupEl.setPointerCapture(ev.pointerId);
+      });
+
+      groupEl.addEventListener("pointermove", (ev) => {
+        if (!isPointerDown) return;
+        const dxScreen = ev.clientX - startClientX;
+        const dyScreen = ev.clientY - startClientY;
+        if (!hasDragged && Math.hypot(dxScreen, dyScreen) > 4) {
+          hasDragged = true;
+        }
+        if (hasDragged) {
+          node.x = origX + dxScreen / state.transform.scale;
+          node.y = origY + dyScreen / state.transform.scale;
+          updatePositions();
+        }
+      });
+
+      const endPointer = (ev) => {
+        if (!isPointerDown) return;
+        isPointerDown = false;
+        if (groupEl.hasPointerCapture(ev.pointerId)) {
+          groupEl.releasePointerCapture(ev.pointerId);
+        }
+        if (!hasDragged) {
+          selectNode(node.id);
+        }
+      };
+
+      groupEl.addEventListener("pointerup", endPointer);
+      groupEl.addEventListener("pointercancel", endPointer);
+    }
+
+    // Background Panning & Deselect on Click
+    let isPanning = false;
+    let hasPanned = false;
+    let panStartX = 0;
+    let panStartY = 0;
+    let panOrigTx = 0;
+    let panOrigTy = 0;
+
+    svgEl.addEventListener("pointerdown", (ev) => {
+      if (ev.button !== 0 && ev.pointerType === "mouse") return;
+      isPanning = true;
+      hasPanned = false;
+      panStartX = ev.clientX;
+      panStartY = ev.clientY;
+      panOrigTx = state.transform.x;
+      panOrigTy = state.transform.y;
+      svgEl.classList.add("is-panning");
+      svgEl.setPointerCapture(ev.pointerId);
+    });
+
+    svgEl.addEventListener("pointermove", (ev) => {
+      if (!isPanning) return;
+      const dx = ev.clientX - panStartX;
+      const dy = ev.clientY - panStartY;
+      if (!hasPanned && Math.hypot(dx, dy) > 4) {
+        hasPanned = true;
+      }
+      if (hasPanned) {
+        state.transform.x = panOrigTx + dx;
+        state.transform.y = panOrigTy + dy;
+        applyViewportTransform();
+      }
+    });
+
+    const endPan = (ev) => {
+      if (!isPanning) return;
+      isPanning = false;
+      svgEl.classList.remove("is-panning");
+      if (svgEl.hasPointerCapture(ev.pointerId)) {
+        svgEl.releasePointerCapture(ev.pointerId);
+      }
+      if (!hasPanned) {
+        clearSelection();
+      }
+    };
+
+    svgEl.addEventListener("pointerup", endPan);
+    svgEl.addEventListener("pointercancel", endPan);
+
+    // Mouse Wheel Zoom anchored at cursor
+    canvasWrapper.addEventListener("wheel", (ev) => {
+      ev.preventDefault();
+      const rect = canvasWrapper.getBoundingClientRect();
+      const mouseX = ev.clientX - rect.left;
+      const mouseY = ev.clientY - rect.top;
+
+      const zoomFactor = ev.deltaY < 0 ? 1.12 : 0.89;
+      zoomAtPoint(zoomFactor, mouseX, mouseY);
+    }, { passive: false });
+
+    function zoomAtPoint(factor, screenX, screenY) {
+      const oldScale = state.transform.scale;
+      const newScale = Math.min(2.6, Math.max(0.28, oldScale * factor));
+      const actualFactor = newScale / oldScale;
+
+      state.transform.x = screenX - (screenX - state.transform.x) * actualFactor;
+      state.transform.y = screenY - (screenY - state.transform.y) * actualFactor;
+      state.transform.scale = newScale;
+      applyViewportTransform();
+    }
+
+    function fitGraphToView(animate = true) {
+      const rect = canvasWrapper.getBoundingClientRect();
+      const w = rect.width || 800;
+      const h = rect.height || 600;
+
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      state.nodes.forEach(n => {
+        minX = Math.min(minX, n.x - 75);
+        maxX = Math.max(maxX, n.x + 75);
+        minY = Math.min(minY, n.y - 60);
+        maxY = Math.max(maxY, n.y + 60);
+      });
+
+      const graphW = Math.max(200, maxX - minX);
+      const graphH = Math.max(200, maxY - minY);
+      const pad = 48;
+
+      const targetScale = Math.min(1.25, Math.min((w - pad * 2) / graphW, (h - pad * 2) / graphH));
+      const centerX = (minX + maxX) / 2;
+      const centerY = (minY + maxY) / 2;
+
+      const targetX = w / 2 - centerX * targetScale;
+      const targetY = h / 2 - centerY * targetScale;
+
+      if (!animate) {
+        state.transform = { x: targetX, y: targetY, scale: targetScale };
+        applyViewportTransform();
+        return;
+      }
+
+      animateTransform(targetX, targetY, targetScale, 380);
+    }
+
+    function focusOnNode(nodeId) {
+      const node = nodeMap.get(nodeId);
+      if (!node) return;
+      const rect = canvasWrapper.getBoundingClientRect();
+      const w = rect.width || 800;
+      const h = rect.height || 600;
+      const targetScale = Math.max(state.transform.scale, 1.02);
+      const targetX = w / 2 - node.x * targetScale;
+      const targetY = h / 2 - node.y * targetScale;
+      animateTransform(targetX, targetY, targetScale, 420);
+    }
+
+    function animateTransform(targetX, targetY, targetScale, duration = 400) {
+      const startX = state.transform.x;
+      const startY = state.transform.y;
+      const startScale = state.transform.scale;
+      const startTime = performance.now();
+
+      function step(now) {
+        const t = Math.min(1, (now - startTime) / duration);
+        const ease = 1 - Math.pow(1 - t, 3); // easeOutCubic
+        state.transform.x = startX + (targetX - startX) * ease;
+        state.transform.y = startY + (targetY - startY) * ease;
+        state.transform.scale = startScale + (targetScale - startScale) * ease;
+        applyViewportTransform();
+        if (t < 1) requestAnimationFrame(step);
+      }
+      requestAnimationFrame(step);
+    }
+
+    /* ==========================================================================
+       9. SELECTION & INSPECTOR PANEL RENDERING
+       ========================================================================== */
+    function selectNode(nodeId, shouldFocus = false) {
+      const node = nodeMap.get(nodeId);
+      if (!node) return;
+
+      state.selectedNodeId = nodeId;
+      state.selectedEdgeId = null;
+      updateVisualHighlights();
+      renderNodeInspector(node);
+      renderSourceMiniPreview(node);
+
+      if (shouldFocus) {
+        focusOnNode(nodeId);
+      }
+    }
+
+    function selectEdge(edgeId) {
+      const edge = state.edges.find(e => e.id === edgeId);
+      if (!edge) return;
+
+      state.selectedEdgeId = edgeId;
+      state.selectedNodeId = null;
+      updateVisualHighlights();
+      renderEdgeInspector(edge);
+      switchTab("inspector");
+    }
+
+    function clearSelection() {
+      state.selectedNodeId = null;
+      state.selectedEdgeId = null;
+      updateVisualHighlights();
+      renderOverviewInspector();
+      sourceMiniPreview.classList.remove("visible");
+    }
+
+    function renderOverviewInspector() {
+      inspectorContent.innerHTML = `
+        <div class="overview-card">
+          <h3>📜 구언(求言) 교서 사료 구조 안내</h3>
+          <p>
+            그래프의 <strong>노드(15개)</strong> 또는 <strong>간선(22개)</strong>을 클릭하면, 조선 왕조가 언로(言路)를 열어 신민의 직언을 수렴하고 새로운 선정(<strong>신정·新政</strong>)을 도모하는 구조적 관계와 원문 근거를 상세히 분석할 수 있습니다.
+          </p>
+        </div>
+
+        <div class="overview-card">
+          <h3>🧭 핵심 개념 바로가기</h3>
+          <p>아래 주요 키워드를 클릭하면 해당 노드로 즉시 포커스됩니다.</p>
+          <div class="quick-node-grid">
+            ${state.nodes.map(n => `
+              <button type="button" class="quick-node-pill" onclick="window.__selectNodeAndFocus('${n.id}')">
+                ${n.name}
+              </button>
+            `).join("")}
+          </div>
+        </div>
+      `;
+    }
+
+    function renderNodeInspector(node) {
+      const meta = CLASS_META[node.cls];
+      const incoming = state.edges.filter(e => e.to === node.id);
+      const outgoing = state.edges.filter(e => e.from === node.id);
+
+      const incomingHtml = incoming.length === 0
+        ? `<div class="desc-box" style="color:var(--text-ink-light);font-size:12.5px;">들어오는 관계가 없습니다 (최상위 기원 노드).</div>`
+        : `<div class="rel-list">
+            ${incoming.map(e => {
+              const src = nodeMap.get(e.from);
+              const srcMeta = CLASS_META[src.cls];
+              return `
+                <div class="rel-item" onclick="window.__selectNodeAndFocus('${src.id}')" title="${src.name} 노드로 이동">
+                  <span class="rel-node-name">
+                    <span class="chip-dot" style="background:${srcMeta.color}"></span>
+                    ${src.name}
+                  </span>
+                  <span class="rel-tag">-[${e.label}]→</span>
+                </div>
+              `;
+            }).join("")}
+          </div>`;
+
+      const outgoingHtml = outgoing.length === 0
+        ? `<div class="desc-box" style="color:var(--text-ink-light);font-size:12.5px;">나가는 관계가 없습니다 (최종 지향 목표 노드).</div>`
+        : `<div class="rel-list">
+            ${outgoing.map(e => {
+              const tgt = nodeMap.get(e.to);
+              const tgtMeta = CLASS_META[tgt.cls];
+              return `
+                <div class="rel-item" onclick="window.__selectNodeAndFocus('${tgt.id}')" title="${tgt.name} 노드로 이동">
+                  <span class="rel-tag out">-[${e.label}]→</span>
+                  <span class="rel-node-name">
+                    <span class="chip-dot" style="background:${tgtMeta.color}"></span>
+                    ${tgt.name}
+                  </span>
+                </div>
+              `;
+            }).join("")}
+          </div>`;
+
+      inspectorContent.innerHTML = `
+        <div class="detail-header">
+          <div>
+            <span class="class-badge" style="background:${meta.color}">${meta.label}</span>
+            <h2 class="detail-title">
+              ${node.name}
+              <span class="detail-hanja">${node.hanja}</span>
+            </h2>
+          </div>
+          <button type="button" class="btn" style="padding:4px 9px;font-size:12px;" onclick="window.__clearSelection()">전체 보기</button>
+        </div>
+
+        <div class="detail-section">
+          <div class="section-label"><span>사료적 역할 및 해설</span><span>ID: ${node.id}</span></div>
+          <div class="desc-box">${node.desc}</div>
+        </div>
+
+        <div class="detail-section">
+          <div class="section-label"><span>구언 교서 원문 인용</span></div>
+          <blockquote class="quote-box">“${node.quote}”</blockquote>
+        </div>
+
+        <div class="detail-section">
+          <div class="section-label"><span>들어오는 관계 (Incoming · ${incoming.length})</span></div>
+          ${incomingHtml}
+        </div>
+
+        <div class="detail-section">
+          <div class="section-label"><span>나가는 관계 (Outgoing · ${outgoing.length})</span></div>
+          ${outgoingHtml}
+        </div>
+      `;
+    }
+
+    function renderEdgeInspector(edge) {
+      const src = nodeMap.get(edge.from);
+      const tgt = nodeMap.get(edge.to);
+      const srcMeta = CLASS_META[src.cls];
+      const tgtMeta = CLASS_META[tgt.cls];
+
+      inspectorContent.innerHTML = `
+        <div class="detail-header">
+          <div>
+            <span class="class-badge" style="background:var(--color-agent)">관계 분석 (Relationship)</span>
+            <h2 class="detail-title">
+              ${edge.label}
+              <span class="detail-hanja">${edge.code}</span>
+            </h2>
+          </div>
+          <button type="button" class="btn" style="padding:4px 9px;font-size:12px;" onclick="window.__clearSelection()">전체 보기</button>
+        </div>
+
+        <div class="edge-triple-box">
+          <button type="button" class="triple-node-btn" onclick="window.__selectNodeAndFocus('${src.id}')">
+            <span style="display:flex;align-items:center;gap:7px;">
+              <span class="chip-dot" style="background:${srcMeta.color}"></span>
+              ${src.name} (${src.hanja})
+            </span>
+            <span style="font-size:11px;color:var(--text-ink-muted);">노드 보기 →</span>
+          </button>
+
+          <div class="triple-arrow">
+            <span>↓ -[ ${edge.label} ]→</span>
+          </div>
+
+          <button type="button" class="triple-node-btn" onclick="window.__selectNodeAndFocus('${tgt.id}')">
+            <span style="display:flex;align-items:center;gap:7px;">
+              <span class="chip-dot" style="background:${tgtMeta.color}"></span>
+              ${tgt.name} (${tgt.hanja})
+            </span>
+            <span style="font-size:11px;color:var(--text-ink-muted);">노드 보기 →</span>
+          </button>
+        </div>
+
+        <div class="detail-section">
+          <div class="section-label"><span>관계 맥락 해설</span><span>${edge.id}</span></div>
+          <div class="desc-box">${edge.desc}</div>
+        </div>
+      `;
+    }
+
+    function renderSourceMiniPreview(node) {
+      const meta = CLASS_META[node.cls];
+      sourceMiniPreview.innerHTML = `
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+          <span class="class-badge" style="background:${meta.color};margin-bottom:0;">${meta.shortLabel}</span>
+          <button type="button" class="btn" style="padding:3px 9px;font-size:11.5px;" onclick="window.__switchToInspector()">상세 관계 보기 →</button>
+        </div>
+        <div style="font-family:var(--font-serif);font-weight:800;font-size:15px;margin-bottom:4px;">
+          ${node.name} <span style="font-weight:400;font-size:12.5px;color:var(--text-ink-muted);">${node.hanja}</span>
+        </div>
+        <p style="font-size:12.5px;color:var(--text-ink-muted);line-height:1.55;">${node.desc}</p>
+      `;
+      sourceMiniPreview.classList.add("visible");
+    }
+
+    // Expose safe global helpers for inline onclick handlers
+    window.__selectNodeAndFocus = (id) => {
+      switchTab("inspector");
+      selectNode(id, true);
+    };
+    window.__clearSelection = () => clearSelection();
+    window.__switchToInspector = () => switchTab("inspector");
+
+    /* ==========================================================================
+       10. TABS, FILTERS, SEARCH, LAYOUT ANIMATION & HTML EXPORT
+       ========================================================================== */
+    function switchTab(tabName) {
+      const isInspector = tabName === "inspector";
+      tabInspector.classList.toggle("active", isInspector);
+      tabInspector.setAttribute("aria-selected", String(isInspector));
+      paneInspector.classList.toggle("active", isInspector);
+
+      tabSource.classList.toggle("active", !isInspector);
+      tabSource.setAttribute("aria-selected", String(!isInspector));
+      paneSource.classList.toggle("active", !isInspector);
+    }
+
+    tabInspector.addEventListener("click", () => switchTab("inspector"));
+    tabSource.addEventListener("click", () => switchTab("source"));
+
+    document.getElementById("btn-source-toggle").addEventListener("click", () => {
+      const isSourceOpen = paneSource.classList.contains("active");
+      switchTab(isSourceOpen ? "inspector" : "source");
+    });
+
+    // Source text keyword clicks
+    document.querySelectorAll(".kw-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const nodeId = btn.getAttribute("data-node");
+        selectNode(nodeId, true);
+      });
+    });
+
+    // Class Filter buttons
+    document.querySelectorAll(".chip-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".chip-btn").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+
+        state.activeFilter = btn.getAttribute("data-filter");
+        state.selectedNodeId = null;
+        state.selectedEdgeId = null;
+        updateVisualHighlights();
+
+        if (state.activeFilter === "all") {
+          renderOverviewInspector();
+        } else {
+          const meta = CLASS_META[state.activeFilter];
+          const matched = state.nodes.filter(n => n.cls === state.activeFilter);
+          inspectorContent.innerHTML = `
+            <div class="detail-header">
+              <div>
+                <span class="class-badge" style="background:${meta.color}">${meta.label}</span>
+                <h2 class="detail-title">${meta.shortLabel} 클래스 (${matched.length}개)</h2>
+              </div>
+              <button type="button" class="btn" style="padding:4px 9px;font-size:12px;" onclick="window.__resetFilters()">필터 해제</button>
+            </div>
+            <div class="rel-list">
+              ${matched.map(n => `
+                <div class="rel-item" onclick="window.__selectNodeAndFocus('${n.id}')">
+                  <span class="rel-node-name">
+                    <span class="chip-dot" style="background:${meta.color}"></span>
+                    ${n.name} (${n.hanja})
+                  </span>
+                  <span class="rel-tag">상세 분석 →</span>
+                </div>
+              `).join("")}
+            </div>
+          `;
+        }
+      });
+    });
+
+    window.__resetFilters = () => {
+      document.querySelector('.chip-btn[data-filter="all"]').click();
+    };
+
+    // Real-time Search
+    searchInput.addEventListener("input", (ev) => {
+      state.searchQuery = ev.target.value;
+      searchClear.classList.toggle("visible", state.searchQuery.length > 0);
+      state.selectedNodeId = null;
+      state.selectedEdgeId = null;
+      updateVisualHighlights();
+
+      const q = state.searchQuery.trim().toLowerCase();
+      if (q.length > 0) {
+        const matches = state.nodes.filter(n =>
+          n.name.toLowerCase().includes(q) ||
+          n.hanja.toLowerCase().includes(q) ||
+          n.desc.toLowerCase().includes(q)
+        );
+        inspectorContent.innerHTML = `
+          <div class="detail-header">
+            <div>
+              <span class="class-badge" style="background:var(--text-ink)">검색 결과</span>
+              <h2 class="detail-title">“${state.searchQuery}” (${matches.length}건)</h2>
+            </div>
+          </div>
+          ${matches.length === 0
+            ? `<div class="desc-box">일치하는 노드가 없습니다.</div>`
+            : `<div class="rel-list">
+                ${matches.map(n => {
+                  const m = CLASS_META[n.cls];
+                  return `
+                    <div class="rel-item" onclick="window.__selectNodeAndFocus('${n.id}')">
+                      <span class="rel-node-name">
+                        <span class="chip-dot" style="background:${m.color}"></span>
+                        ${n.name} (${n.hanja})
+                      </span>
+                      <span class="rel-tag">${m.shortLabel}</span>
+                    </div>
+                  `;
+                }).join("")}
+              </div>`
+          }
+        `;
+      } else {
+        renderOverviewInspector();
+      }
+    });
+
+    searchClear.addEventListener("click", () => {
+      searchInput.value = "";
+      state.searchQuery = "";
+      searchClear.classList.remove("visible");
+      updateVisualHighlights();
+      renderOverviewInspector();
+    });
+
+    // Layout Transition with Smooth Animation
+    document.querySelectorAll(".layout-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const layoutName = btn.getAttribute("data-layout");
+        document.querySelectorAll(".layout-btn").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+
+        state.currentLayout = layoutName;
+        const targetPreset = LAYOUT_PRESETS[layoutName];
+        if (!targetPreset) return;
+
+        const startCoords = {};
+        state.nodes.forEach(n => {
+          startCoords[n.id] = { x: n.x, y: n.y };
+        });
+
+        const duration = 480;
+        const startTime = performance.now();
+
+        function animateNodes(now) {
+          const t = Math.min(1, (now - startTime) / duration);
+          const ease = 1 - Math.pow(1 - t, 3);
+          state.nodes.forEach(n => {
+            const s = startCoords[n.id];
+            const e = targetPreset[n.id];
+            n.x = s.x + (e.x - s.x) * ease;
+            n.y = s.y + (e.y - s.y) * ease;
+          });
+          updatePositions();
+
+          if (t < 1) {
+            requestAnimationFrame(animateNodes);
+          } else {
+            fitGraphToView(true);
+          }
+        }
+        requestAnimationFrame(animateNodes);
+      });
+    });
+
+    // Zoom & Fit Buttons
+    document.getElementById("btn-fit").addEventListener("click", () => fitGraphToView(true));
+    document.getElementById("btn-zoom-reset").addEventListener("click", () => fitGraphToView(true));
+
+    document.getElementById("btn-zoom-in").addEventListener("click", () => {
+      const rect = canvasWrapper.getBoundingClientRect();
+      zoomAtPoint(1.22, rect.width / 2, rect.height / 2);
+    });
+
+    document.getElementById("btn-zoom-out").addEventListener("click", () => {
+      const rect = canvasWrapper.getBoundingClientRect();
+      zoomAtPoint(0.82, rect.width / 2, rect.height / 2);
+    });
+
+    // Standalone HTML Export Button
+    document.getElementById("btn-download-html").addEventListener("click", () => {
+      try {
+        const fullHtml = "<!DOCTYPE html>\n" + document.documentElement.outerHTML;
+        const blob = new Blob([fullHtml], { type: "text/html;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "조선시대_구언교서_지식그래프.html";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showToast("독립 실행형 HTML 파일이 다운로드되었습니다.");
+      } catch (err) {
+        showToast("HTML 파일 생성 중 오류가 발생했습니다.");
+      }
+    });
+
+    /* ==========================================================================
+       11. INITIALIZATION
+       ========================================================================== */
+    function init() {
+      buildGraphDOM();
+      renderOverviewInspector();
+      fitGraphToView(false);
+
+      window.addEventListener("resize", () => {
+        fitGraphToView(false);
+      });
+    }
+
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", init);
+    } else {
+      init();
+    }
+  </script>
+
+
+      <script>
+        (function() {
+          // The root element's background fills the whole page. As in CSS,
+          // the body's background is used when the root element has none.
+          function getPageBackgroundColor() {
+            var docStyle = window.getComputedStyle(document.documentElement);
+            var color = docStyle.backgroundColor;
+            if ((color === 'rgba(0, 0, 0, 0)' || color === 'transparent') &&
+                docStyle.backgroundImage === 'none' && document.body) {
+              color = window.getComputedStyle(document.body).backgroundColor;
+            }
+            return color || '';
+          }
+
+          var lastReportedColor = '';
+          function reportBackgroundColor() {
+            try {
+              var color = getPageBackgroundColor();
+              if (color === lastReportedColor) return;
+              lastReportedColor = color;
+              window.parent.postMessage({
+                type: 'ATARI_CODE_EMBED_BACKGROUND_COLOR',
+                backgroundColor: color
+              }, '*');
+            } catch (e) {}
+          }
+
+          // The page background usually changes through an attribute on html
+          // or body (for example a theme class), a style sheet in head, or the
+          // system color scheme.
+          if (typeof MutationObserver !== 'undefined') {
+            var observer = new MutationObserver(reportBackgroundColor);
+            observer.observe(document.documentElement, {attributes: true});
+            if (document.body) {
+              observer.observe(document.body, {attributes: true});
+            }
+            if (document.head) {
+              observer.observe(document.head, {
+                attributes: true,
+                childList: true,
+                subtree: true,
+                characterData: true
+              });
+            }
+          }
+          var colorSchemeQuery =
+              window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)');
+          if (colorSchemeQuery && colorSchemeQuery.addEventListener) {
+            colorSchemeQuery.addEventListener('change', reportBackgroundColor);
+          }
+          window.addEventListener('load', reportBackgroundColor);
+          window.addEventListener('transitionend', reportBackgroundColor);
+          window.addEventListener('animationend', reportBackgroundColor);
+          reportBackgroundColor();
+        })();
+      </script>
+    </body></html>
